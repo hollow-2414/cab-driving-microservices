@@ -1,0 +1,28 @@
+# Root .gitignore for Cab-Driving Microservices Platform
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# Build outputs & Target directories
+**/target/
+**/build/
+*.jar
+*.war
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Log & Temporary files
+*.log
+*.dump
+*.dumpstream
