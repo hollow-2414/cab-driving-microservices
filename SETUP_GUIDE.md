@@ -170,7 +170,7 @@ curl -X GET "http://localhost:8082/api/locations/nearby?latitude=12.9716&longitu
 Submit a ride request from MG Road to Koramangala:
 
 ```bash
-curl -X POST http://localhost:8081/api/rides \
+curl -X POST http://localhost:8083/api/rides \
   -H "Content-Type: application/json" \
   -d '{
     "riderId": "rider-001",
@@ -200,7 +200,7 @@ curl -X POST http://localhost:8081/api/rides \
 Copy the `id` returned from Step 6.3 and check the ride status:
 
 ```bash
-curl -X GET http://localhost:8081/api/rides/<RIDE_UUID_HERE>
+curl -X GET http://localhost:8083/api/rides/<RIDE_UUID_HERE>
 ```
 *Expected Response*: The status will automatically transition from `MATCHING` to `ACCEPTED`, and `driverId` will be updated to `"driver-101"` via the Kafka `ride.matched` event consumer!
 
@@ -210,7 +210,7 @@ curl -X GET http://localhost:8081/api/rides/<RIDE_UUID_HERE>
 Simulate driver clicking "Start Ride":
 
 ```bash
-curl -X PUT http://localhost:8081/api/rides/<RIDE_UUID_HERE>/start
+curl -X PUT http://localhost:8083/api/rides/<RIDE_UUID_HERE>/start
 ```
 *Expected Response*: Status updates to `"RIDE_STARTED"`, `startedAt` timestamp is populated.
 
@@ -220,7 +220,7 @@ curl -X PUT http://localhost:8081/api/rides/<RIDE_UUID_HERE>/start
 Simulate trip completion:
 
 ```bash
-curl -X PUT http://localhost:8081/api/rides/<RIDE_UUID_HERE>/complete
+curl -X PUT http://localhost:8083/api/rides/<RIDE_UUID_HERE>/complete
 ```
 *Expected Response*: Status updates to `"COMPLETED"`, `actualFare` is finalized, `completedAt` timestamp is set.
 

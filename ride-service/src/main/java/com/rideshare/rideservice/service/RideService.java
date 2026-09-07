@@ -2,14 +2,19 @@ package com.rideshare.rideservice.service;
 
 import com.rideshare.rideservice.dto.RideRequest;
 import com.rideshare.rideservice.dto.RideResponse;
+import com.rideshare.rideservice.event.OutboxEvent;
 import com.rideshare.rideservice.event.RideRequestedEvent;
 import com.rideshare.rideservice.model.Ride;
 import com.rideshare.rideservice.model.RideStatus;
+import com.rideshare.rideservice.repository.OutboxEventRepository;
 import com.rideshare.rideservice.repository.RideRepository;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,24 +28,32 @@ public class RideService {
     private final RideRepository rideRepository;
     private final KafkaTemplate<String, RideRequestedEvent> kafkaTemplate;
 
+    private final ObjectMapper objectMapper;
+    private final OutboxEventRepository outboxEventRepository;
+
     private static final String RIDE_REQUESTED_TOPIC = "ride.requested";
 
     /**
      * create ride in DB with REQUESTED STATUS
      */
-
+    @Transactional
     public RideResponse requestRide(RideRequest request) {
         log.info("New ride request from rider: {}", request.getRiderId());
 
         // Step 1: save ride to database
-        Ride savedRide = MapToRepo(request);
-        // Step 2: Publish event to Kafka
-        // Matching service will consume this and find nearest driver
-        publishEventToKafka(savedRide);
+        Ride savedRide = MapToRide(request);
 
         // Update status to Matching
         savedRide.setStatus(RideStatus.MATCHING);
         rideRepository.save(savedRide);
+        // Instead of sending directly to Kafka:
+        // 3. Create outbox event(kafka publishing and matching will be done in this outbox)
+        createOutboxEvent(savedRide);
+
+
+        // Step 2: Publish event to Kafka
+//         Matching service will consume this and find nearest driver
+//        publishEventToKafka(savedRide);
 
         return mapToResponse(savedRide);
 
@@ -108,7 +121,7 @@ public class RideService {
                 .collect(Collectors.toList());
     }
 
-    private Ride MapToRepo(RideRequest request) {
+    private Ride MapToRide(RideRequest request) {
         Ride ride = new Ride();
         ride.setRiderId(request.getRiderId());
         ride.setPickupLatitude(request.getPickupLatitude());
@@ -180,5 +193,41 @@ public class RideService {
         response.setStartedAt(ride.getStartedAt());
         response.setCompletedAt(ride.getCompletedAt());
         return response;
+    }
+
+    private void createOutboxEvent(Ride savedRide) {
+
+        RideRequestedEvent event = new RideRequestedEvent(
+                savedRide.getId(),
+                savedRide.getRiderId(),
+                savedRide.getPickupLatitude(),
+                savedRide.getPickupLongitude(),
+                savedRide.getPickupAddress(),
+                savedRide.getDropLatitude(),
+                savedRide.getDropLongitude(),
+                savedRide.getDropAddress()
+        );
+
+        String payload;
+
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JacksonException e) {
+            throw new RuntimeException(
+                    "Failed to serialize RideRequestedEvent",
+                    e
+            );
+        }
+
+        OutboxEvent outboxEvent = new OutboxEvent(
+                RIDE_REQUESTED_TOPIC,
+                "RIDE_REQUESTED",
+                savedRide.getId(),
+                payload,
+                "PENDING",
+                LocalDateTime.now()
+        );
+
+        outboxEventRepository.save(outboxEvent);
     }
 }

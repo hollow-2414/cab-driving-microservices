@@ -91,6 +91,8 @@ cd matching-service && mvn spring-boot:run
 
 ## 🔗 Documentation Links
 
+- 🚀 **[INITIAL_MICROSERVICES_V01.md](INITIAL_MICROSERVICES_V01.md)** — Milestone v0.1: Initial microservices architecture with Kafka, Redis Geo, and MySQL.
+- 📬 **[TRANSACTIONAL_OUTBOX.md](TRANSACTIONAL_OUTBOX.md)** — Milestone v0.2: Transactional Outbox pattern implementation details.
 - 📖 **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Exhaustive HLD, LLD, Class Diagrams, Database Schemas, and Algorithms.
 - 🛠️ **[SETUP_GUIDE.md](SETUP_GUIDE.md)** — Step-by-step setup guide with copy-pasteable cURL requests.
 - 🧪 **[TEST_REPORT.md](TEST_REPORT.md)** — Detailed unit test execution matrix and verification details.
