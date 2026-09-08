@@ -30,4 +30,12 @@ public class KafkaConfig {
                 .build();
     }
 
+    @Bean
+    public NewTopic rideRequestedDltTopic() {
+        return TopicBuilder.name("ride.requested-dlt")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
 }

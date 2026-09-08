@@ -18,7 +18,8 @@ A production-grade, distributed, event-driven cab booking microservices system d
 - **🎯 Multi-Factor Driver Selection**: Intelligent driver scoring combining proximity (70% weight) and rating metrics (30% weight).
 - **📐 Mathematical Fare Calculation**: Automatic pricing estimation powered by the Haversine trigonometric distance formula ($\text{₹}50\text{ base} + \text{₹}12/\text{km}$).
 - **🛡️ Strict Ride Lifecycle State Machine**: Enforces valid state transitions (`REQUESTED` $\rightarrow$ `MATCHING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `RIDE_STARTED` $\rightarrow$ `COMPLETED` / `CANCELLED`).
-- **✅ 100% Test Coverage**: Fully verified with 21 unit tests across all microservices using JUnit 5 & Mockito.
+- **🔁 Resilience & Dead Letter Topic (DLT)**: Non-blocking exponential backoff retries (1s, 2s, 4s) with Spring Kafka `DefaultErrorHandler`, `ErrorHandlingDeserializer`, and routing to `ride.requested-dlt` via `DeadLetterPublishingRecoverer`.
+- **✅ 100% Test Coverage**: Fully verified with unit tests across all microservices using JUnit 5 & Mockito.
 
 ---
 
@@ -91,11 +92,11 @@ cd matching-service && mvn spring-boot:run
 
 ## 🔗 Documentation Links
 
-- 🚀 **[INITIAL_MICROSERVICES_V01.md](INITIAL_MICROSERVICES_V01.md)** — Milestone v0.1: Initial microservices architecture with Kafka, Redis Geo, and MySQL.
-- 📬 **[TRANSACTIONAL_OUTBOX.md](TRANSACTIONAL_OUTBOX.md)** — Milestone v0.2: Transactional Outbox pattern implementation details.
-- 📖 **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Exhaustive HLD, LLD, Class Diagrams, Database Schemas, and Algorithms.
+- 🚀 **[INITIAL_MICROSERVICES_V01.md](docs/engineering/INITIAL_MICROSERVICES_V01.md)** — Milestone v0.1: Initial microservices architecture with Kafka, Redis Geo, and MySQL.
+- 📬 **[TRANSACTIONAL_OUTBOX_V02.md](docs/engineering/TRANSACTIONAL_OUTBOX_V02.md)** — Milestone v0.2: Transactional Outbox pattern implementation details.
+- 🔁 **[RETRY_AND_DLT_DOCUMENTATION_V03.md](docs/engineering/RETRY_AND_DLT_DOCUMENTATION_V03.md)** — Milestone v0.3: Exponential Backoff Retries & Dead Letter Topic (DLT) pattern implementation details.
+- 📖 **[ARCHITECTURE.md](ARCHITECTURE.md)** — Exhaustive HLD, LLD, Class Diagrams, Database Schemas, and Algorithms.
 - 🛠️ **[SETUP_GUIDE.md](SETUP_GUIDE.md)** — Step-by-step setup guide with copy-pasteable cURL requests.
-- 🧪 **[TEST_REPORT.md](TEST_REPORT.md)** — Detailed unit test execution matrix and verification details.
 
 ---
 

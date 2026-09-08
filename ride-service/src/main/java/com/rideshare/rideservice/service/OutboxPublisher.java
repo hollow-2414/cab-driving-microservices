@@ -1,12 +1,14 @@
 package com.rideshare.rideservice.service;
 
 import com.rideshare.rideservice.event.OutboxEvent;
+import com.rideshare.rideservice.event.RideRequestedEvent;
 import com.rideshare.rideservice.repository.OutboxEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -17,7 +19,9 @@ public class OutboxPublisher {
 
     private final OutboxEventRepository outboxEventRepository;
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, RideRequestedEvent> kafkaTemplate;
+
+    private final ObjectMapper objectMapper;
 
     @Scheduled(fixedDelay = 5000)
     public void publishPendingEvents() {
@@ -34,31 +38,48 @@ public class OutboxPublisher {
 
     private void publishEvent(OutboxEvent event) {
 
-        kafkaTemplate.send(
-                event.getTopic(),
-                event.getAggregateId(),
-                event.getPayload()
-        ).whenComplete((result, exception) -> {
+        try {
 
-            if (exception == null) {
+            RideRequestedEvent rideRequestedEvent =
+                    objectMapper.readValue(
+                            event.getPayload(),
+                            RideRequestedEvent.class
+                    );
 
-                event.setStatus("SENT");
+            kafkaTemplate.send(
+                    event.getTopic(),
+                    event.getAggregateId(),
+                    rideRequestedEvent
+            ).whenComplete((result, exception) -> {
 
-                outboxEventRepository.save(event);
+                if (exception == null) {
 
-                log.info(
-                        "Outbox event {} published successfully",
-                        event.getId()
-                );
+                    event.setStatus("SENT");
 
-            } else {
+                    outboxEventRepository.save(event);
 
-                log.error(
-                        "Failed to publish outbox event {}",
-                        event.getId(),
-                        exception
-                );
-            }
-        });
+                    log.info(
+                            "Outbox event {} published successfully",
+                            event.getId()
+                    );
+
+                } else {
+
+                    log.error(
+                            "Failed to publish outbox event {}",
+                            event.getId(),
+                            exception
+                    );
+                }
+            });
+
+        } catch (Exception exception) {
+
+            log.error(
+                    "Failed to deserialize outbox event {}",
+                    event.getId(),
+                    exception
+            );
+        }
     }
 }

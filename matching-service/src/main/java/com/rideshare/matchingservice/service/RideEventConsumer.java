@@ -16,24 +16,21 @@ public class RideEventConsumer {
     /**
      * Listens to ride.requested kafka topic.
      * Triggered every time Ride Service published a new ride request
-     *
+     * <p>
      * FLOW:
      * Ride Service -> Kafka (ride.requested) -> This Consumer -> MatchingService
      */
 
     @KafkaListener(
             topics = "ride.requested",
-            groupId = "matching-service-group"
+            groupId = "matching-service-group",
+            containerFactory = "kafkaListenerContainerFactory"
     )
-    public void consumeRideRequestedEvent(RideRequestedEvent event){
-        try{
-            matchingService.matchDriverForRide(event);
-        }
-        catch (Exception e){
-            log.error("Error processing ride request: {} - {}",
-                    event.getRideId(), e.getMessage());
+    public void consumeRideRequestedEvent(RideRequestedEvent event) {
 
-            // In production: send to dead letter queue for retry
-        }
+        log.error("Processing ride request: {}", event.getRideId());
+
+        matchingService.matchDriverForRide(event);
+
     }
 }
