@@ -858,15 +858,18 @@ Possible production strategies:
 - Circuit breaker
 - Fallback behavior
 
-## Duplicate Kafka Events
+## Duplicate Kafka Events & Consumer Idempotency
 
-Kafka consumers should be designed with **idempotency** in mind.
+Kafka consumers are implemented with an **Idempotent Consumer Pattern** to guarantee exact-once business logic processing despite Kafka's at-least-once delivery guarantees:
 
-For example, processing the same `ride.matched` event twice should not
-corrupt the ride or assign conflicting drivers.
-
-A common approach is to use the `rideId` as an idempotency/business key
-and make state transitions conditional.
+1. **Persistent Event Store**:
+   - `matching-service` persists processed event IDs in table `Requested_processed_events` (`ProcessedEvent` JPA entity).
+   - `ride-service` persists processed event IDs in table `Matched_processed_events` (`ProcessedEntity` JPA entity).
+2. **`IdempotencyService`**: Encapsulates `isProcessed(eventId)` lookup and `markProcessed(eventId, eventType)` database records.
+3. **Consumer Guard Workflow**:
+   - Before executing domain logic, `RideEventConsumer` queries `idempotencyService.isProcessed(rideId)`.
+   - If `true`, the duplicate event is logged and immediately dropped without executing side effects.
+   - If `false`, domain processing runs to completion, and the event ID is stored as processed in MySQL within `idempotencyService.markProcessed(...)`.
 
 ## No Drivers Available
 
@@ -957,8 +960,8 @@ cluster with appropriate:
 | Kafka between Ride and Matching     | Decouples ride creation from matching               |
 | Feign between Matching and Location | Matching needs immediate nearby-driver data         |
 | Redis Geo for locations             | Fast geospatial lookup for frequently changing data |
-| MySQL for rides                     | Durable relational persistence                      |
-| Stateless Matching Service          | Easy horizontal scaling                             |
+| MySQL for rides & idempotency       | Durable relational persistence for state & events   |
+| Idempotent Kafka Consumers          | Prevents duplicate event processing side-effects    |
 | Kafka key = `rideId`                | Keeps events associated with the same ride          |
 | State machine for rides             | Prevents invalid lifecycle transitions              |
 

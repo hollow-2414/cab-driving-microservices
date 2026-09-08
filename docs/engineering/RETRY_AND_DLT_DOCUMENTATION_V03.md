@@ -58,7 +58,7 @@ Without proper error handling, a failing message can either crash the consumer o
 ### A. Producer Side (`ride-service`)
 
 #### 1. DLT Topic Creation
-* **File:** [`KafkaConfig.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/config/KafkaConfig.java#L30-L38)
+* **File:** [`KafkaConfig.java`](../../ride-service/src/main/java/com/rideshare/rideservice/config/KafkaConfig.java)
 * **Description:** Added a `NewTopic` bean for `ride.requested-dlt` with 3 partitions and replication factor 1 to ensure the DLT exists before consumers attempt to publish failure records.
 
 ```java
@@ -72,7 +72,7 @@ public NewTopic rideRequestedDltTopic() {
 ```
 
 #### 2. Typed Outbox Event Publishing
-* **File:** [`OutboxPublisher.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/service/OutboxPublisher.java#L38-L84)
+* **File:** [`OutboxPublisher.java`](../../ride-service/src/main/java/com/rideshare/rideservice/service/OutboxPublisher.java)
 * **Description:** Updated `KafkaTemplate` from `KafkaTemplate<String, String>` to `KafkaTemplate<String, RideRequestedEvent>`. Outbox JSON payloads are deserialized into strongly-typed `RideRequestedEvent` objects before publishing.
 
 ---
@@ -80,7 +80,7 @@ public NewTopic rideRequestedDltTopic() {
 ### B. Consumer Side (`matching-service`)
 
 #### 1. Safe Deserialization Strategy
-* **File:** [`application.properties`](file:///c:/Users/amank/Desktop/cab-driving/matching-service/src/main/resources/application.properties#L10-L11)
+* **File:** [`application.properties`](../../matching-service/src/main/resources/application.properties)
 * **Description:** Replaced raw `JacksonJsonDeserializer` with `ErrorHandlingDeserializer`. If a record cannot be deserialized, `ErrorHandlingDeserializer` intercepts the exception and passes it cleanly to the `DefaultErrorHandler` instead of crashing the listener loop.
 
 ```properties
@@ -89,7 +89,7 @@ spring.kafka.consumer.properties.spring.deserializer.value.delegate.class=org.sp
 ```
 
 #### 2. Kafka Listener Container & Retry Configuration
-* **File:** [`KafkaConsumerConfig.java`](file:///c:/Users/amank/Desktop/cab-driving/matching-service/src/main/java/com/rideshare/matchingservice/config/KafkaConsumerConfig.java)
+* **File:** [`KafkaConsumerConfig.java`](../../matching-service/src/main/java/com/rideshare/matchingservice/config/KafkaConsumerConfig.java)
 * **Description:** 
   - **DLT Producer Template (`dltKafkaTemplate`):** Configured to publish records to Kafka when retries are exhausted.
   - **Recoverer (`DeadLetterPublishingRecoverer`):** Automatically routes failed records to `<original-topic>-dlt` (`ride.requested-dlt`).
@@ -120,7 +120,7 @@ public DefaultErrorHandler kafkaErrorHandler(
 ```
 
 #### 3. Consumer Exception Propagation
-* **File:** [`RideEventConsumer.java`](file:///c:/Users/amank/Desktop/cab-driving/matching-service/src/main/java/com/rideshare/matchingservice/service/RideEventConsumer.java#L23-L35)
+* **File:** [`RideEventConsumer.java`](../../matching-service/src/main/java/com/rideshare/matchingservice/service/RideEventConsumer.java)
 * **Description:** Removed explicit `try-catch` block that was swallowing exceptions. Specified `containerFactory = "kafkaListenerContainerFactory"` on `@KafkaListener`. Uncaught exceptions now propagate to Spring Kafka's `DefaultErrorHandler`.
 
 ```java

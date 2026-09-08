@@ -77,15 +77,15 @@ Outbox events are stored in the database table `outbox_events` managed by JPA Hi
 ## 4. Key Components Implemented
 
 ### 4.1 Outbox Event Entity
-- **File**: [`OutboxEvent.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/event/OutboxEvent.java)
+- **File**: [`OutboxEvent.java`](../../ride-service/src/main/java/com/rideshare/rideservice/event/OutboxEvent.java)
 - JPA Entity mapped to `@Table(name = "outbox_events")` representing individual outbox entries.
 
 ### 4.2 Outbox Repository
-- **File**: [`OutboxEventRepository.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/repository/OutboxEventRepository.java)
+- **File**: [`OutboxEventRepository.java`](../../ride-service/src/main/java/com/rideshare/rideservice/repository/OutboxEventRepository.java)
 - Defines JPA query method `findByStatusOrderByCreatedAtAsc("PENDING")` to retrieve pending events sequentially by creation timestamp.
 
 ### 4.3 Atomic Ride & Outbox Event Creation
-- **File**: [`RideService.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/service/RideService.java)
+- **File**: [`RideService.java`](../../ride-service/src/main/java/com/rideshare/rideservice/service/RideService.java)
 - Method `requestRide(RideRequest request)` is annotated with `@Transactional`.
 - Serializes `RideRequestedEvent` into JSON using `ObjectMapper` and writes the `OutboxEvent` inside `createOutboxEvent(savedRide)`.
 
@@ -105,7 +105,7 @@ public RideResponse requestRide(RideRequest request) {
 ```
 
 ### 4.4 Outbox Publisher (Background Scheduler)
-- **File**: [`OutboxPublisher.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/service/OutboxPublisher.java)
+- **File**: [`OutboxPublisher.java`](../../ride-service/src/main/java/com/rideshare/rideservice/service/OutboxPublisher.java)
 - Runs a background worker using Spring's `@Scheduled(fixedDelay = 5000)`.
 - Fetches all `PENDING` outbox events, dispatches them asynchronously via `KafkaTemplate`, and upon successful acknowledgment, updates status to `SENT`.
 
@@ -120,13 +120,13 @@ public void publishPendingEvents() {
 ```
 
 ### 4.5 Enabling Scheduling
-- **File**: [`RideServiceApplication.java`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/java/com/rideshare/rideservice/RideServiceApplication.java)
+- **File**: [`RideServiceApplication.java`](../../ride-service/src/main/java/com/rideshare/rideservice/RideServiceApplication.java)
 - Added `@EnableScheduling` to activate background scheduling in the Spring container.
 
 ### 4.6 Jackson JSON Serializer Configuration
 - **Files**: 
-  - [`ride-service/src/main/resources/application.properties`](file:///c:/Users/amank/Desktop/cab-driving/ride-service/src/main/resources/application.properties)
-  - [`matching-service/src/main/resources/application.properties`](file:///c:/Users/amank/Desktop/cab-driving/matching-service/src/main/resources/application.properties)
+  - [`ride-service/src/main/resources/application.properties`](../../ride-service/src/main/resources/application.properties)
+  - [`matching-service/src/main/resources/application.properties`](../../matching-service/src/main/resources/application.properties)
 - Updated Kafka producer and consumer configurations to use `JacksonJsonSerializer` and `JacksonJsonDeserializer`.
 
 ---

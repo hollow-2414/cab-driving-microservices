@@ -15,6 +15,7 @@ A production-grade, distributed, event-driven cab booking microservices system d
 
 - **⚡ Real-Time Geospatial Driver Indexing**: Ingests driver coordinates via Redis Geo (`GEOADD`, `GEORADIUS`) with $O(\log N + M)$ spatial query complexity.
 - **🔄 Event-Driven Matching Engine**: Decoupled asynchronous event processing using Apache Kafka (`ride.requested` and `ride.matched` topics).
+- **🔒 Idempotent Event Processing**: Guards consumers (`RideEventConsumer`) against duplicate Kafka message delivery using persistent MySQL state checks (`IdempotencyService`).
 - **🎯 Multi-Factor Driver Selection**: Intelligent driver scoring combining proximity (70% weight) and rating metrics (30% weight).
 - **📐 Mathematical Fare Calculation**: Automatic pricing estimation powered by the Haversine trigonometric distance formula ($\text{₹}50\text{ base} + \text{₹}12/\text{km}$).
 - **🛡️ Strict Ride Lifecycle State Machine**: Enforces valid state transitions (`REQUESTED` $\rightarrow$ `MATCHING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `RIDE_STARTED` $\rightarrow$ `COMPLETED` / `CANCELLED`).
@@ -59,8 +60,8 @@ A production-grade, distributed, event-driven cab booking microservices system d
 | Service | Port | Database / Cache | Responsibilities |
 | :--- | :---: | :--- | :--- |
 | **`location-service`** | `8082` | Redis (`drivers:location`) | Ingests driver telemetry heartbeats, exposes radius search (`GEORADIUS`). |
-| **`matching-service`** | `8084` | Stateless (Feign + Kafka) | Listens for `ride.requested`, queries nearby drivers, scores candidates, publishes `ride.matched`. |
-| **`ride-service`** | `8083` | MySQL (`uberapp.rides`) | Manages ride bookings, calculates Haversine fares, maintains state machine, publishes `ride.requested`. |
+| **`matching-service`** | `8084` | MySQL (`Requested_processed_events`) + Feign + Kafka | Listens for `ride.requested`, checks event idempotency, queries nearby drivers, scores candidates, publishes `ride.matched`. |
+| **`ride-service`** | `8083` | MySQL (`uberapp.rides`, `Matched_processed_events`) | Manages ride bookings, calculates Haversine fares, maintains state machine, checks event idempotency, publishes `ride.requested`. |
 
 ---
 
@@ -92,6 +93,7 @@ cd matching-service && mvn spring-boot:run
 
 ## 🔗 Documentation Links
 
+- 🔒 **[IDEMPOTENT_EVENT_PROCESSING_V04.md](docs/engineering/IDEMPOTENT_EVENT_PROCESSING_V04.md)** — Idempotent consumer pattern implementation using MySQL state tracking.
 - 🚀 **[INITIAL_MICROSERVICES_V01.md](docs/engineering/INITIAL_MICROSERVICES_V01.md)** — Milestone v0.1: Initial microservices architecture with Kafka, Redis Geo, and MySQL.
 - 📬 **[TRANSACTIONAL_OUTBOX_V02.md](docs/engineering/TRANSACTIONAL_OUTBOX_V02.md)** — Milestone v0.2: Transactional Outbox pattern implementation details.
 - 🔁 **[RETRY_AND_DLT_DOCUMENTATION_V03.md](docs/engineering/RETRY_AND_DLT_DOCUMENTATION_V03.md)** — Milestone v0.3: Exponential Backoff Retries & Dead Letter Topic (DLT) pattern implementation details.
