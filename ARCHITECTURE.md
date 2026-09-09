@@ -263,8 +263,8 @@ setup**, not a production Kafka cluster.
 
 | Service            | Responsibilities                                                               | Storage   |
 |--------------------|--------------------------------------------------------------------------------|-----------|
-| `location-service` | Receive driver locations, update Geo index, find nearby drivers                | Redis     |
-| `matching-service` | Consume ride requests, find candidate drivers, score candidates, publish match | Stateless |
+| `location-service` | Receive driver locations, update Geo index, find nearby drivers, atomic claim  | Redis     |
+| `matching-service` | Consume ride requests, find candidate drivers, score & claim driver, publish   | Stateless |
 | `ride-service`     | Create rides, persist rides, calculate fare, manage ride status                | MySQL     |
 
 ### Location Service
@@ -372,18 +372,23 @@ Redis Geo Index
 
 ## Redis Data Structure
 
-Redis stores the locations using its geospatial functionality.
-
-Conceptually:
+Redis stores geospatial locations and atomic claims:
 
 ``` text
 drivers:location
-       │
        └── driverId → longitude + latitude
+
+driver:claim:{driverId} → rideId (TTL: 30s)
+ride:claim:{rideId}     → driverId (TTL: 30s)
 ```
 
-The actual Redis key used by the application should remain the source of
-truth if it changes.
+## Atomic Driver Claiming & 30s TTL
+
+To prevent race conditions where multiple concurrent ride requests claim the same driver, `location-service` executes an atomic Redis Lua script (`CLAIM_SCRIPT`):
+1. **Key Non-Existence Check**: Checks if `driver:claim:{driverId}` or `ride:claim:{rideId}` exists.
+2. **Atomic Reservation with TTL**: If unclaimed, atomically sets both keys with a 30-second TTL (`EX 30`).
+3. **Auto Cleanup**: If a claim is abandoned, Redis automatically expires keys after 30 seconds.
+4. **Stale Release Protection**: An optional `DELETE /api/v1/drivers/{driverId}/claim?rideId={rideId}` endpoint executes a Lua script (`RELEASE_SCRIPT`) checking `rideId` match before deleting, protecting active claims from being accidentally released by stale processes.
 
 ## Nearby Driver Search
 
@@ -727,11 +732,13 @@ The calculated value is rounded to two decimal places.
 
 ## Location Service — `localhost:8082`
 
-| Method   | Endpoint                               | Purpose                |
-|----------|----------------------------------------|------------------------|
-| `POST`   | `/api/v1/locations/...`                | Driver location update |
-| `GET`    | `/api/v1/locations/drivers/nearby`     | Find nearby drivers    |
-| `DELETE` | `/api/v1/locations/drivers/{driverId}` | Remove driver location |
+| Method   | Endpoint                               | Purpose                     |
+|----------|----------------------------------------|-----------------------------|
+| `POST`   | `/api/v1/locations/...`                | Driver location update      |
+| `GET`    | `/api/v1/locations/drivers/nearby`     | Find nearby drivers         |
+| `DELETE` | `/api/v1/locations/drivers/{driverId}` | Remove driver location      |
+| `POST`   | `/api/v1/drivers/{driverId}/claim`     | Atomic driver claim (30s)   |
+| `DELETE` | `/api/v1/drivers/{driverId}/claim`     | Release claim (stale safe)  |
 
 > Exact controller mappings should be treated as the source of truth if
 > the API evolves.

@@ -14,6 +14,7 @@ A production-grade, distributed, event-driven cab booking microservices system d
 ## 🌟 Key Features
 
 - **⚡ Real-Time Geospatial Driver Indexing**: Ingests driver coordinates via Redis Geo (`GEOADD`, `GEORADIUS`) with $O(\log N + M)$ spatial query complexity.
+- **🔒 Atomic Driver Claiming & 30s TTL**: Prevents race conditions and double-booking during matching using Redis Lua scripts (`CLAIM_SCRIPT`) with 30-second TTL reservations.
 - **🔄 Event-Driven Matching Engine**: Decoupled asynchronous event processing using Apache Kafka (`ride.requested` and `ride.matched` topics).
 - **🔒 Idempotent Event Processing**: Guards consumers (`RideEventConsumer`) against duplicate Kafka message delivery using persistent MySQL state checks (`IdempotencyService`).
 - **🎯 Multi-Factor Driver Selection**: Intelligent driver scoring combining proximity (70% weight) and rating metrics (30% weight).
@@ -59,8 +60,8 @@ A production-grade, distributed, event-driven cab booking microservices system d
 
 | Service | Port | Database / Cache | Responsibilities |
 | :--- | :---: | :--- | :--- |
-| **`location-service`** | `8082` | Redis (`drivers:location`) | Ingests driver telemetry heartbeats, exposes radius search (`GEORADIUS`). |
-| **`matching-service`** | `8084` | MySQL (`Requested_processed_events`) + Feign + Kafka | Listens for `ride.requested`, checks event idempotency, queries nearby drivers, scores candidates, publishes `ride.matched`. |
+| **`location-service`** | `8082` | Redis (`drivers:location`, `driver:claim:*`) | Ingests driver telemetry, exposes radius search (`GEORADIUS`), manages atomic driver claiming with 30s TTL. |
+| **`matching-service`** | `8084` | MySQL (`Requested_processed_events`) + Feign + Kafka | Listens for `ride.requested`, checks event idempotency, queries nearby drivers, claims best driver atomically, publishes `ride.matched`. |
 | **`ride-service`** | `8083` | MySQL (`uberapp.rides`, `Matched_processed_events`) | Manages ride bookings, calculates Haversine fares, maintains state machine, checks event idempotency, publishes `ride.requested`. |
 
 ---
@@ -94,6 +95,7 @@ cd matching-service && mvn spring-boot:run
 ## 🔗 Documentation Links
 
 - 🔒 **[IDEMPOTENT_EVENT_PROCESSING_V04.md](docs/engineering/IDEMPOTENT_EVENT_PROCESSING_V04.md)** — Idempotent consumer pattern implementation using MySQL state tracking.
+- 🚗 **[ATOMIC_DRIVER_CLAIMING_V05.md](docs/engineering/ATOMIC_DRIVER_CLAIMING_V05.md)** — Atomic driver claiming using Redis Lua scripts, 30s TTL cleanup, and stale release protection.
 - 🚀 **[INITIAL_MICROSERVICES_V01.md](docs/engineering/INITIAL_MICROSERVICES_V01.md)** — Milestone v0.1: Initial microservices architecture with Kafka, Redis Geo, and MySQL.
 - 📬 **[TRANSACTIONAL_OUTBOX_V02.md](docs/engineering/TRANSACTIONAL_OUTBOX_V02.md)** — Milestone v0.2: Transactional Outbox pattern implementation details.
 - 🔁 **[RETRY_AND_DLT_DOCUMENTATION_V03.md](docs/engineering/RETRY_AND_DLT_DOCUMENTATION_V03.md)** — Milestone v0.3: Exponential Backoff Retries & Dead Letter Topic (DLT) pattern implementation details.
@@ -112,9 +114,17 @@ Content-Type: application/json
 { "driverId": "driver-101", "latitude": 12.9720, "longitude": 77.5950 }
 ```
 
-### 2. Request a Cab
+### 2. Claim Driver (Atomic Reservation)
 ```http
-POST http://localhost:8081/api/rides
+POST http://localhost:8082/api/v1/drivers/driver-101/claim
+Content-Type: application/json
+
+{ "rideId": "R400" }
+```
+
+### 3. Request a Cab
+```http
+POST http://localhost:8083/api/v1/rides/request
 Content-Type: application/json
 
 {
@@ -128,9 +138,9 @@ Content-Type: application/json
 }
 ```
 
-### 3. Track Ride Status
+### 4. Track Ride Status
 ```http
-GET http://localhost:8081/api/rides/{rideId}
+GET http://localhost:8083/api/v1/rides/{id}
 ```
 
 ---

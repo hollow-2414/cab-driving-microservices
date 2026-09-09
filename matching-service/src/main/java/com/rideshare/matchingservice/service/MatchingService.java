@@ -1,6 +1,8 @@
 package com.rideshare.matchingservice.service;
 
 import com.rideshare.matchingservice.client.LocationServiceClient;
+import com.rideshare.matchingservice.dto.DriverClaimRequest;
+import com.rideshare.matchingservice.dto.DriverClaimResponse;
 import com.rideshare.matchingservice.dto.NearByDriverResponse;
 import com.rideshare.matchingservice.event.RideMatchedEvent;
 import com.rideshare.matchingservice.event.RideRequestedEvent;
@@ -11,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @Slf4j
@@ -48,27 +49,65 @@ public class MatchingService {
         }
 
         // STEP 2: Score each driver and pick the best one
-        Optional<NearByDriverResponse> bestDriver = findBestDriver(nearByDrivers);
+        List<NearByDriverResponse> rankedDrivers =
+                rankDrivers(nearByDrivers);
 
-        if(bestDriver.isEmpty()){
-            log.warn("could not find suitable driver for ride");
+        if (rankedDrivers.isEmpty()) {
+            log.warn("Could not find suitable driver for ride {}", event.getRideId());
             return;
         }
 
-        NearByDriverResponse assignedDriver = bestDriver.get();
+        // STEP 3: Try to claim drivers in ranking order
+        for (NearByDriverResponse driver : rankedDrivers) {
 
-        //STEP 3: Publish RideMatchedEvent to Kafka
-        RideMatchedEvent matchedEvent = new RideMatchedEvent(
-                event.getRideId(),
-                event.getRiderId(),
-                assignedDriver.getDriverId(),
-                assignedDriver.getLatitude(),
-                assignedDriver.getLongitude(),
-                assignedDriver.getDistanceInKm()
+            DriverClaimRequest request = new DriverClaimRequest();
+            request.setRideId(event.getRideId());
+
+            DriverClaimResponse response =
+                    locationServiceClient.claimDriver(
+                            driver.getDriverId(),
+                            request
+                    );
+
+            if (!response.isClaimed()) {
+                log.info(
+                        "Driver {} could not be claimed. Trying next driver.",
+                        driver.getDriverId()
+                );
+                continue;
+            }
+
+            // STEP 4: We successfully claimed this driver
+            RideMatchedEvent matchedEvent = new RideMatchedEvent(
+                    event.getRideId(),
+                    event.getRiderId(),
+                    driver.getDriverId(),
+                    driver.getLatitude(),
+                    driver.getLongitude(),
+                    driver.getDistanceInKm()
+            );
+
+            // STEP 5: Publish only after successful claim
+            kafkaTemplate.send(
+                    RIDE_MATCHED_TOPIC,
+                    event.getRideId(),
+                    matchedEvent
+            );
+
+            log.info(
+                    "Driver {} claimed successfully for ride {}. RideMatchedEvent published.",
+                    driver.getDriverId(),
+                    event.getRideId()
+            );
+
+            return;
+        }
+
+        // All candidate drivers failed to claim
+        log.warn(
+                "No available driver could be claimed for ride {}",
+                event.getRideId()
         );
-
-        kafkaTemplate.send(RIDE_MATCHED_TOPIC, event.getRideId(), matchedEvent);
-        log.info("RideMatchedEvent published");
     }
 
     /**
@@ -83,27 +122,29 @@ public class MatchingService {
 //     * @return
      */
 
-    private Optional<NearByDriverResponse> findBestDriver(
-            List<NearByDriverResponse> drivers){
+    private List<NearByDriverResponse> rankDrivers(
+            List<NearByDriverResponse> drivers) {
 
         double distanceWeight = 0.7;
         double ratingWeight = 0.3;
 
         return drivers.stream()
-                .max(Comparator.comparingDouble(driver -> {
-                    //Distance score: closer = higher score
-                    // Add 0.1 to avoid division by zero
-                    double distanceScore = 1.0/(driver.getDistanceInKm() + 0.1);
+                .sorted(
+                        Comparator.comparingDouble(
+                                (NearByDriverResponse driver) -> {
 
-                    // Simulated rating between 4.0 and 5.0
-                    // In production: fetch from Driver Service
+                                    double distanceScore =
+                                            1.0 / (driver.getDistanceInKm() + 0.1);
 
-                    double simulatedRating = 4.0 + Math.random();
+                                    double simulatedRating =
+                                            4.0 + Math.random();
 
-                    //Final weighted score
-                    return (distanceScore * distanceWeight)
-                            + (simulatedRating * ratingWeight);
-                }));
+                                    return (distanceScore * distanceWeight)
+                                            + (simulatedRating * ratingWeight);
+                                }
+                        ).reversed()
+                )
+                .toList();
     }
 
 }
