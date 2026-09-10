@@ -57,6 +57,16 @@ public class RideController {
         return ResponseEntity.ok(rideService.startRide(rideId));
     }
 
+    // Driver Arriving
+    @PutMapping("/{rideId}/arriving")
+    public ResponseEntity<RideResponse> driverArriving(
+            @PathVariable String rideId) {
+
+        return ResponseEntity.ok(
+                rideService.driverArriving(rideId)
+        );
+    }
+
 
     // Driver Completes the Ride
     @PutMapping("/{rideId}/complete")

@@ -589,7 +589,7 @@ ride-service
 
 # 10. Ride Lifecycle
 
-The ride follows a controlled state machine.
+The ride follows a strict state machine validated by `RideStateTransitionValidator.java`.
 
 ``` mermaid
 stateDiagram-v2
@@ -598,28 +598,34 @@ stateDiagram-v2
 
     REQUESTED --> MATCHING
     MATCHING --> ACCEPTED
-
-    ACCEPTED --> RIDE_STARTED
+    ACCEPTED --> DRIVER_ARRIVING
+    DRIVER_ARRIVING --> RIDE_STARTED
     RIDE_STARTED --> COMPLETED
 
     REQUESTED --> CANCELLED
     MATCHING --> CANCELLED
     ACCEPTED --> CANCELLED
+    DRIVER_ARRIVING --> CANCELLED
+    RIDE_STARTED --> CANCELLED
 ```
 
-| Current State  | Target State   | Allowed |
-|----------------|----------------|:-------:|
-| `REQUESTED`    | `MATCHING`     |   ✅    |
-| `MATCHING`     | `ACCEPTED`     |   ✅    |
-| `ACCEPTED`     | `RIDE_STARTED` |   ✅    |
-| `RIDE_STARTED` | `COMPLETED`    |   ✅    |
-| `REQUESTED`    | `CANCELLED`    |   ✅    |
-| `MATCHING`     | `CANCELLED`    |   ✅    |
-| `ACCEPTED`     | `CANCELLED`    |   ✅    |
-| `REQUESTED`    | `COMPLETED`    |   ❌    |
+| Current State      | Target State       | Allowed | Notes / Triggers |
+|--------------------|--------------------|:-------:|------------------|
+| `REQUESTED`        | `MATCHING`         |   ✅    | Initial booking (`POST /api/v1/rides/request`). |
+| `MATCHING`         | `ACCEPTED`         |   ✅    | Kafka `ride.matched` consumer driver assignment. |
+| `ACCEPTED`         | `DRIVER_ARRIVING`  |   ✅    | Driver en route to pickup (`PUT /{id}/arriving`). |
+| `DRIVER_ARRIVING`  | `RIDE_STARTED`     |   ✅    | Rider onboarded (`PUT /{id}/start`). |
+| `RIDE_STARTED`     | `COMPLETED`        |   ✅    | Trip complete (`PUT /{id}/complete`). |
+| `REQUESTED`        | `CANCELLED`        |   ✅    | Cancellation before matching. |
+| `MATCHING`         | `CANCELLED`        |   ✅    | Cancellation during matching. |
+| `ACCEPTED`         | `CANCELLED`        |   ✅    | Cancellation after driver acceptance. |
+| `DRIVER_ARRIVING`  | `CANCELLED`        |   ✅    | Cancellation while driver is arriving. |
+| `RIDE_STARTED`     | `CANCELLED`        |   ✅    | Cancellation during ride. |
+| `COMPLETED`        | *Any State*        |   ❌    | Terminal state; transition rejected with `IllegalStateException`. |
+| `CANCELLED`        | *Any State*        |   ❌    | Terminal state; transition rejected with `IllegalStateException`. |
+| `REQUESTED`        | `COMPLETED`        |   ❌    | Direct skip rejected with `IllegalStateException`. |
 
-The application should reject invalid transitions rather than allowing
-arbitrary status updates.
+The application enforces these rules strictly via `RideStateTransitionValidator`, throwing an `IllegalStateException` for any unauthorized or terminal state transition.
 
 ------------------------------------------------------------------------
 
@@ -745,14 +751,15 @@ The calculated value is rounded to two decimal places.
 
 ## Ride Service — `localhost:8083`
 
-| Method | Endpoint                        | Purpose          |
-|--------|---------------------------------|------------------|
-| `POST` | `/api/v1/rides/request`         | Request a ride   |
-| `GET`  | `/api/v1/rides/{id}`            | Get ride details |
-| `GET`  | `/api/v1/rides/rider/{riderId}` | Get rider rides  |
-| `PUT`  | `/api/v1/rides/{id}/start`      | Start ride       |
-| `PUT`  | `/api/v1/rides/{id}/complete`   | Complete ride    |
-| `PUT`  | `/api/v1/rides/{id}/cancel`     | Cancel ride      |
+| Method | Endpoint                        | Purpose                           |
+|--------|---------------------------------|-----------------------------------|
+| `POST` | `/api/v1/rides/request`         | Request a ride                    |
+| `GET`  | `/api/v1/rides/{id}`            | Get ride details                  |
+| `GET`  | `/api/v1/rides/rider/{riderId}` | Get rider rides                   |
+| `PUT`  | `/api/v1/rides/{id}/arriving`   | Driver arriving at pickup location|
+| `PUT`  | `/api/v1/rides/{id}/start`      | Start ride                        |
+| `PUT`  | `/api/v1/rides/{id}/complete`   | Complete ride                     |
+| `PUT`  | `/api/v1/rides/{id}/cancel`     | Cancel ride                       |
 
 ------------------------------------------------------------------------
 
@@ -792,6 +799,9 @@ sequenceDiagram
     Kafka->>Ride: Consume ride.matched
     Ride->>DB: Assign driver + ACCEPTED
 
+    Driver->>Ride: Driver Arriving
+    Ride->>DB: DRIVER_ARRIVING
+
     Driver->>Ride: Start ride
     Ride->>DB: RIDE_STARTED
 
@@ -822,11 +832,13 @@ sequenceDiagram
         ↓
 10. Matching Service → Kafka
         ↓
-11. Ride Service assigns driver
+11. Ride Service assigns driver (ACCEPTED)
         ↓
-12. Driver starts ride
+12. Driver arriving at pickup (DRIVER_ARRIVING)
         ↓
-13. Driver completes ride
+13. Driver starts ride (RIDE_STARTED)
+        ↓
+14. Driver completes ride (COMPLETED)
 ```
 
 ------------------------------------------------------------------------

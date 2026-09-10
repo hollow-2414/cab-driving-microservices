@@ -38,8 +38,7 @@ class RideServiceTest {
     @DisplayName("requestRide - Saves ride, calculates estimated fare, publishes Kafka event, and updates status to MATCHING")
     void testRequestRide_Success() {
         RideRequest request = new RideRequest(
-                "rider-1", 12.9716, 77.5946, "MG Road", 12.9352, 77.6245, "Koramangala"
-        );
+                "rider-1", 12.9716, 77.5946, "MG Road", 12.9352, 77.6245, "Koramangala");
 
         Ride mockRide = new Ride();
         mockRide.setId("ride-123");

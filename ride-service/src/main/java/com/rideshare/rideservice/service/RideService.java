@@ -31,6 +31,8 @@ public class RideService {
     private final ObjectMapper objectMapper;
     private final OutboxEventRepository outboxEventRepository;
 
+    private final RideStateTransitionValidator stateTransitionValidator;
+
     private static final String RIDE_REQUESTED_TOPIC = "ride.requested";
 
     /**
@@ -44,7 +46,12 @@ public class RideService {
         Ride savedRide = MapToRide(request);
 
         // Update status to Matching
+        stateTransitionValidator.validate(
+                savedRide.getStatus(),
+                RideStatus.MATCHING
+        );
         savedRide.setStatus(RideStatus.MATCHING);
+
         rideRepository.save(savedRide);
         // Instead of sending directly to Kafka:
         // 3. Create outbox event(kafka publishing and matching will be done in this outbox)
@@ -63,18 +70,40 @@ public class RideService {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
 
+        stateTransitionValidator.validate(
+                ride.getStatus(),
+                RideStatus.ACCEPTED
+        );
+
         ride.setDriverId(driverId);
         ride.setStatus(RideStatus.ACCEPTED);
         rideRepository.save(ride);
+    }
+
+    public RideResponse driverArriving(String rideId) {
+
+        Ride ride = rideRepository.findById(rideId)
+                .orElseThrow(() -> new RuntimeException("Ride not found"));
+
+        stateTransitionValidator.validate(
+                ride.getStatus(),
+                RideStatus.DRIVER_ARRIVING
+        );
+
+        ride.setStatus(RideStatus.DRIVER_ARRIVING);
+        rideRepository.save(ride);
+
+        return mapToResponse(ride);
     }
 
     public RideResponse startRide(String rideId) {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
 
-        if (ride.getStatus() != RideStatus.ACCEPTED) {
-            throw new RuntimeException("Ride cannot be started. Current status: " + ride.getStatus());
-        }
+        stateTransitionValidator.validate(
+                ride.getStatus(),
+                RideStatus.RIDE_STARTED
+        );
 
         ride.setStatus(RideStatus.RIDE_STARTED);
         ride.setStartedAt(LocalDateTime.now());
@@ -87,9 +116,10 @@ public class RideService {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
 
-        if (ride.getStatus() != RideStatus.RIDE_STARTED) {
-            throw new RuntimeException("Ride cannot be completed. Current status: " + ride.getStatus());
-        }
+        stateTransitionValidator.validate(
+                ride.getStatus(),
+                RideStatus.COMPLETED
+        );
         ride.setStatus(RideStatus.COMPLETED);
         ride.setCompletedAt(LocalDateTime.now());
         ride.setActualFare(ride.getEstimatedFare());
@@ -102,6 +132,11 @@ public class RideService {
     public RideResponse cancelRide(String rideId) {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
+
+        stateTransitionValidator.validate(
+                ride.getStatus(),
+                RideStatus.CANCELLED
+        );
 
         ride.setStatus(RideStatus.CANCELLED);
         rideRepository.save(ride);

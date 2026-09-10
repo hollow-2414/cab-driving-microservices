@@ -43,6 +43,9 @@ public class LocationService {
                                 driverPoint,
                                 driverLocationRequest.getDriverId());
 
+            log.info("Updating location for driver updated : {}",
+                    driverLocationRequest.getDriverId());
+
                 /**
                  * Find nearby drivers within given radius.
                  * Called by Matching Service on ride request.
