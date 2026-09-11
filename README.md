@@ -94,6 +94,7 @@ cd matching-service && mvn spring-boot:run
 
 ## 🔗 Documentation Links
 
+- 🔁 **[RETRY_DEDUPLICATION_V07.md](docs/engineering/RETRY_DEDUPLICATION_V07.md)** — Resilience retry deduplication, clean single-layer retry architecture, and Circuit Breaker hygiene.
 - 🚦 **[RIDE_STATE_MACHINE_V06.md](docs/engineering/RIDE_STATE_MACHINE_V06.md)** — Strict ride lifecycle state machine, `DRIVER_ARRIVING` transition, and invalid state validation.
 - 🔒 **[IDEMPOTENT_EVENT_PROCESSING_V04.md](docs/engineering/IDEMPOTENT_EVENT_PROCESSING_V04.md)** — Idempotent consumer pattern implementation using MySQL state tracking.
 - 🚗 **[ATOMIC_DRIVER_CLAIMING_V05.md](docs/engineering/ATOMIC_DRIVER_CLAIMING_V05.md)** — Atomic driver claiming using Redis Lua scripts, 30s TTL cleanup, and stale release protection.

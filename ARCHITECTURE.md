@@ -870,12 +870,10 @@ configured Kafka retention and consumer behavior.
 
 Matching cannot obtain current driver candidates.
 
-Possible production strategies:
-
-- Timeouts
-- Retries
-- Circuit breaker
-- Fallback behavior
+The platform implements **Single-Layer Resilience**:
+- **Resilient Client (`LocationServiceResilientClient`)**: Wraps Feign REST calls with Resilience4j `@Retry` (3 max attempts) and `@CircuitBreaker` (sliding window 10, minimum calls 5).
+- **Clean Service Layer**: `MatchingService` remains clean without duplicate `@Retry` annotations to prevent exponential call multiplication ($3 \times 3 = 9$).
+- **Consumer Error Handling**: Spring Kafka `DefaultErrorHandler` handles consumer-level backoff and DLT routing (`ride.requested-dlt`) when downstream services are offline.
 
 ## Duplicate Kafka Events & Consumer Idempotency
 
