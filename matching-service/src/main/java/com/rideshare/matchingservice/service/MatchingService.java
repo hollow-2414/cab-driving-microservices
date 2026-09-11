@@ -1,11 +1,13 @@
 package com.rideshare.matchingservice.service;
 
 import com.rideshare.matchingservice.client.LocationServiceClient;
+import com.rideshare.matchingservice.client.LocationServiceResilientClient;
 import com.rideshare.matchingservice.dto.DriverClaimRequest;
 import com.rideshare.matchingservice.dto.DriverClaimResponse;
 import com.rideshare.matchingservice.dto.NearByDriverResponse;
 import com.rideshare.matchingservice.event.RideMatchedEvent;
 import com.rideshare.matchingservice.event.RideRequestedEvent;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -22,6 +24,8 @@ public class MatchingService {
     private final LocationServiceClient locationServiceClient;
     private final KafkaTemplate<String, RideMatchedEvent> kafkaTemplate;
 
+    private final LocationServiceResilientClient resilientClient;
+
     private static final String RIDE_MATCHED_TOPIC = "ride.matched";
     private static final double DEFAULT_SEARCH_RADIUS_KM = 5.0;
 
@@ -37,7 +41,9 @@ public class MatchingService {
 
     public void matchDriverForRide(RideRequestedEvent event){
 
-        List<NearByDriverResponse> nearByDrivers = locationServiceClient.getNearByDrivers(
+        List<NearByDriverResponse> nearByDrivers =
+                resilientClient
+                        .getNearbyDrivers(
                 event.getPickupLatitude(),
                 event.getPickupLongitude(),
                 DEFAULT_SEARCH_RADIUS_KM
@@ -107,6 +113,16 @@ public class MatchingService {
         log.warn(
                 "No available driver could be claimed for ride {}",
                 event.getRideId()
+        );
+    }
+
+    @Retry(name = "locationServiceRetry")
+    private List<NearByDriverResponse> getNearbyDrivers(RideRequestedEvent event) {
+
+        return locationServiceClient.getNearByDrivers(
+                event.getPickupLatitude(),
+                event.getPickupLongitude(),
+                DEFAULT_SEARCH_RADIUS_KM
         );
     }
 
