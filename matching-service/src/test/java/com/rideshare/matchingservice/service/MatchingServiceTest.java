@@ -1,6 +1,7 @@
 package com.rideshare.matchingservice.service;
 
 import com.rideshare.matchingservice.client.LocationServiceClient;
+import com.rideshare.matchingservice.client.LocationServiceResilientClient;
 import com.rideshare.matchingservice.dto.NearByDriverResponse;
 import com.rideshare.matchingservice.event.RideMatchedEvent;
 import com.rideshare.matchingservice.event.RideRequestedEvent;

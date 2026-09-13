@@ -82,7 +82,6 @@ public class KafkaConsumerConfig {
     }
 
 
-
     @Bean
     public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(
             KafkaTemplate<String, Object> dltKafkaTemplate) {

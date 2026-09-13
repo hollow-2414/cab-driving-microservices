@@ -16,7 +16,7 @@ public class RedisConfig {
         RedisTemplate<String,String> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
 
-        //String seriliazers make data human0readable in Redis CLI
+        //String seriliazers make data humanReadable in Redis CLI
         template.setKeySerializer(new StringRedisSerializer());
         template.setValueSerializer(new StringRedisSerializer());
         template.setHashKeySerializer(new StringRedisSerializer());
