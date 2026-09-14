@@ -32,7 +32,17 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request
-            ){
-        System.out.println(">>> LOGIN CONTROLLER REACHED");
-        return ResponseEntity.ok(authService.login(request));    }
+    ) {
+        System.out.println(" LOGIN CONTROLLER REACHED");
+        return ResponseEntity.ok(authService.login(request));
+    }
+
+    @PostMapping("/service-token")
+    public ResponseEntity<String> serviceToken(
+            @RequestHeader("X-Service-Secret") String secret
+    ) {
+        return ResponseEntity.ok(
+                authService.generateMatchingServiceToken(secret)
+        );
+    }
 }

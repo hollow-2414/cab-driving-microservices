@@ -15,6 +15,9 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -40,7 +43,16 @@ public class RideService {
      */
     @Transactional
     public RideResponse requestRide(RideRequest request) {
-        log.info("New ride request from rider: {}", request.getRiderId());
+
+        String currentUserId = getCurrentUserId();
+
+        if (!currentUserId.equals(request.getRiderId())) {
+            throw new AccessDeniedException(
+                    "You are not allowed to create a ride for another rider"
+            );
+        }
+
+        log.info("New ride request from rider: {}",getCurrentUserId());
 
         // Step 1: save ride to database
         Ride savedRide = MapToRide(request);
@@ -85,6 +97,8 @@ public class RideService {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
 
+        checkOwnership(ride.getDriverId());
+
         stateTransitionValidator.validate(
                 ride.getStatus(),
                 RideStatus.DRIVER_ARRIVING
@@ -99,6 +113,8 @@ public class RideService {
     public RideResponse startRide(String rideId) {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
+
+        checkOwnership(ride.getDriverId());
 
         stateTransitionValidator.validate(
                 ride.getStatus(),
@@ -115,6 +131,8 @@ public class RideService {
     public RideResponse completeRide(String rideId) {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
+
+        checkOwnership(ride.getDriverId());
 
         stateTransitionValidator.validate(
                 ride.getStatus(),
@@ -133,6 +151,8 @@ public class RideService {
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
 
+        checkRideAccess(ride);
+
         stateTransitionValidator.validate(
                 ride.getStatus(),
                 RideStatus.CANCELLED
@@ -144,12 +164,27 @@ public class RideService {
     }
 
     public RideResponse getRideById(String rideId) {
+
         Ride ride = rideRepository.findById(rideId)
                 .orElseThrow(() -> new RuntimeException("Ride not found"));
+
+        String currentUserId = getCurrentUserId();
+
+        if (!currentUserId.equals(ride.getRiderId())
+                && !currentUserId.equals(ride.getDriverId())) {
+
+            throw new AccessDeniedException(
+                    "You are not allowed to access this ride"
+            );
+        }
+
         return mapToResponse(ride);
     }
 
     public List<RideResponse> getRidesByRider(String riderId) {
+
+        checkOwnership(riderId);
+
         return rideRepository.findByRiderIdOrderByCreatedAtDesc(riderId)
                 .stream()
                 .map(this::mapToResponse)
@@ -264,5 +299,35 @@ public class RideService {
         );
 
         outboxEventRepository.save(outboxEvent);
+    }
+
+    private String getCurrentUserId() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        return authentication.getName();
+    }
+
+    private void checkOwnership(String ownerId) {
+        if (!getCurrentUserId().equals(ownerId)) {
+            throw new AccessDeniedException("You are not allowed to access this ride");
+        }
+    }
+
+    private void checkRideAccess(Ride ride) {
+
+        String currentUserId = getCurrentUserId();
+
+        boolean isRider =
+                currentUserId.equals(ride.getRiderId());
+
+        boolean isDriver =
+                currentUserId.equals(ride.getDriverId());
+
+        if (!isRider && !isDriver) {
+            throw new AccessDeniedException(
+                    "You are not allowed to access this ride"
+            );
+        }
     }
 }

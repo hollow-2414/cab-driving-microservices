@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +24,7 @@ public class RideController {
 
     // wHEN Rider requests a new Ride
 
+    @PreAuthorize("hasRole('RIDER')")
     @PostMapping("/request")
     public ResponseEntity<RideResponse> requestRide(
             @Valid @RequestBody RideRequest rideRequest
@@ -43,6 +45,7 @@ public class RideController {
 
 //    Get all rides of a rider
 
+    @PreAuthorize("hasRole('RIDER')")
     @GetMapping("/rider/{riderId}")
     public ResponseEntity<List<RideResponse>> getRidesByRider(
             @PathVariable String riderId
@@ -51,6 +54,7 @@ public class RideController {
     }
 
     // Driver starts the Ride
+    @PreAuthorize("hasRole('DRIVER')")
     @PutMapping("/{rideId}/start")
     public ResponseEntity<RideResponse> startRide(
             @PathVariable String rideId){
@@ -58,6 +62,7 @@ public class RideController {
     }
 
     // Driver Arriving
+    @PreAuthorize("hasRole('DRIVER')")
     @PutMapping("/{rideId}/arriving")
     public ResponseEntity<RideResponse> driverArriving(
             @PathVariable String rideId) {
@@ -69,6 +74,7 @@ public class RideController {
 
 
     // Driver Completes the Ride
+    @PreAuthorize("hasRole('DRIVER')")
     @PutMapping("/{rideId}/complete")
     public ResponseEntity<RideResponse> completeRide(
             @PathVariable String rideId){

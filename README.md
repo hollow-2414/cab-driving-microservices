@@ -21,6 +21,9 @@ A production-grade, distributed, event-driven cab booking microservices system d
 - **📐 Mathematical Fare Calculation**: Automatic pricing estimation powered by the Haversine trigonometric distance formula ($\text{₹}50\text{ base} + \text{₹}12/\text{km}$).
 - **🛡️ Strict Ride Lifecycle State Machine**: Enforces valid state transitions (`REQUESTED` $\rightarrow$ `MATCHING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `DRIVER_ARRIVING` $\rightarrow$ `RIDE_STARTED` $\rightarrow$ `COMPLETED` / `CANCELLED`).
 - **🔁 Resilience & Dead Letter Topic (DLT)**: Non-blocking exponential backoff retries (1s, 2s, 4s) with Spring Kafka `DefaultErrorHandler`, `ErrorHandlingDeserializer`, and routing to `ride.requested-dlt` via `DeadLetterPublishingRecoverer`.
+- **🔐 JWT Authentication & RBAC**: RSA-signed JWTs issued by `auth-service`. Role-based access control (`RIDER`, `DRIVER`, `ADMIN`) enforced via Spring Security `@PreAuthorize`.
+- **👤 Fine-Grained Resource Ownership**: Server-side identity binding via `SecurityContextHolder` — riders and drivers can only access rides they are participants in.
+- **🤝 Service-to-Service Security**: `matching-service` authenticates to `location-service` using a dedicated RSA-signed Service JWT (`role: SERVICE`), injected automatically via Feign interceptor.
 - **✅ 100% Test Coverage**: Fully verified with unit tests across all microservices using JUnit 5 & Mockito.
 
 ---
@@ -28,30 +31,68 @@ A production-grade, distributed, event-driven cab booking microservices system d
 ## 🏗️ System Architecture
 
 ```
-                                  +-----------------------+
-                                  |   Rider / Driver App  |
-                                  +-----------+-----------+
-                                              |
-                     +------------------------+------------------------+
-                     | HTTP / REST                                     | HTTP / REST
-                     v                                                 v
-           +-------------------+                             +-------------------+
-           |   ride-service    |                             | location-service  |
-           |    (Port: 8083)   |                             |    (Port: 8082)   |
-           +---------+---------+                             +---------+---------+
-                     |                                                 ^
-                     | Kafka: ride.requested                           | OpenFeign REST
-                     v                                                 |
+                         +-----------------------+
+                         |   Rider / Driver App  |
+                         +-----------+-----------+
+                                     |
+             +--------JWT Auth-------+-------JWT Auth---------+
+             |  (POST /auth/login)                            |
+             v                                                v
+   +------------------+                           +-------------------+
+   |   auth-service   |                           |   ride-service    |
+   |   (Port: 8085)   |                           |    (Port: 8083)   |
+   | MySQL: auth_db   |                           +---------+---------+
+   +------------------+                                     |
+                                                            | Kafka: ride.requested
+                                                            v
            +-----------------------------------------------------------+---------+
            |                            matching-service                         |
            |                              (Port: 8084)                           |
            +----------------------------------+----------------------------------+
-                                              |
-                                              | Kafka: ride.matched
-                                              v
-                                    +-------------------+
-                                    |   ride-service    |
-                                    +-------------------+
+                                              |                       |
+                          Kafka: ride.matched |                       | OpenFeign + Service JWT
+                                              v                       v
+                                    +-------------------+   +-------------------+
+                                    |   ride-service    |   | location-service  |
+                                    +-------------------+   |    (Port: 8082)   |
+                                                            | Redis: Geo + Claim|
+                                                            +-------------------+
+```
+
+### 🔐 Security Architecture
+
+```
+                         Client (User)
+                               │
+                               │ Bearer JWT (sub: userId, role: RIDER/DRIVER)
+                               ▼
+                  ┌─────────────────────────┐
+                  │      Ride Service       │
+                  └────────────┬────────────┘
+                               │
+                      Spring Security
+                               │
+             ┌─────────────────┴─────────────────┐
+             │                                   │
+           RBAC                              Ownership
+     ("Am I a RIDER?")                  ("Is this MY ride?")
+             │                                   │
+             └─────────────────┬─────────────────┘
+                               │
+                               ▼
+                            Ride DB
+─────────────────────────────────────────────────────────────────────
+                     Service-to-Service Flow:
+
+                     ┌──────────────────┐
+                     │ Matching Service │
+                     └──────────┬───────┘
+                                │
+                                │ Service JWT (sub: matching-service, role: SERVICE)
+                                ▼
+                     ┌──────────────────┐
+                     │ Location Service │ ──► @PreAuthorize("hasRole('SERVICE')")
+                     └──────────────────┘
 ```
 
 ---
@@ -60,40 +101,61 @@ A production-grade, distributed, event-driven cab booking microservices system d
 
 | Service | Port | Database / Cache | Responsibilities |
 | :--- | :---: | :--- | :--- |
-| **`location-service`** | `8082` | Redis (`drivers:location`, `driver:claim:*`) | Ingests driver telemetry, exposes radius search (`GEORADIUS`), manages atomic driver claiming with 30s TTL. |
-| **`matching-service`** | `8084` | MySQL (`Requested_processed_events`) + Feign + Kafka | Listens for `ride.requested`, checks event idempotency, queries nearby drivers, claims best driver atomically, publishes `ride.matched`. |
-| **`ride-service`** | `8083` | MySQL (`uberapp.rides`, `Matched_processed_events`) | Manages ride bookings, calculates Haversine fares, maintains strict state machine (`REQUESTED` $\rightarrow$ `MATCHING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `DRIVER_ARRIVING` $\rightarrow$ `RIDE_STARTED` $\rightarrow$ `COMPLETED` / `CANCELLED`), checks event idempotency, publishes `ride.requested`. |
+| **`auth-service`** | `8085` | MySQL (`auth_db`) | User registration & login, RSA-signed JWT issuance, RBAC role assignment (`RIDER`/`DRIVER`/`ADMIN`), Service-to-Service token generation (`role: SERVICE`). |
+| **`location-service`** | `8082` | Redis (`drivers:location`, `driver:claim:*`) | Ingests driver telemetry (JWT-protected), exposes radius search (`GEORADIUS`), manages atomic driver claiming with 30s TTL (Service-JWT-protected). |
+| **`matching-service`** | `8084` | MySQL (`Requested_processed_events`) + Feign + Kafka | Listens for `ride.requested`, checks event idempotency, queries nearby drivers, claims best driver atomically via Service JWT, publishes `ride.matched`. |
+| **`ride-service`** | `8083` | MySQL (`uberapp.rides`, `Matched_processed_events`) | Manages ride bookings, enforces JWT ownership checks, calculates Haversine fares, maintains strict state machine (`REQUESTED` $\rightarrow$ `MATCHING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `DRIVER_ARRIVING` $\rightarrow$ `RIDE_STARTED` $\rightarrow$ `COMPLETED` / `CANCELLED`), checks event idempotency, publishes `ride.requested`. |
 
 ---
 
-## 🚀 Quick Start in 3 Steps
+## 🚀 Quick Start in 4 Steps
 
 ### 1. Start Infrastructure (Redis & Kafka)
 ```bash
 docker compose up -d
 ```
 
-### 2. Create MySQL Database
+### 2. Create MySQL Databases
 ```sql
 CREATE DATABASE uberapp;
+CREATE DATABASE auth_db;
 ```
 
 ### 3. Build & Run Services
 ```bash
-# Terminal 1: Location Service (Port 8082)
+# Terminal 1: Auth Service (Port 8085) — start first, others depend on it
+cd auth-service && mvn spring-boot:run
+
+# Terminal 2: Location Service (Port 8082)
 cd location-service && mvn spring-boot:run
 
-# Terminal 2: Ride Service (Port 8083)
+# Terminal 3: Ride Service (Port 8083)
 cd ride-service && mvn spring-boot:run
 
-# Terminal 3: Matching Service (Port 8084)
+# Terminal 4: Matching Service (Port 8084)
 cd matching-service && mvn spring-boot:run
 ```
+
+### 4. Obtain a JWT Before Making Requests
+```bash
+# Register a Rider
+curl -X POST http://localhost:8085/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com", "password": "password123", "role": "RIDER"}'
+
+# Login to get JWT
+curl -X POST http://localhost:8085/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "alice@example.com", "password": "password123"}'
+# Response: {"accessToken": "<YOUR_JWT_TOKEN>"}
+```
+> All protected endpoints require `Authorization: Bearer <YOUR_JWT_TOKEN>` header.
 
 ---
 
 ## 🔗 Documentation Links
 
+- 🛡️ **[SERVICE_SECURITY_AND_RESOURCE_OWNERSHIP_V08.md](docs/engineering/SERVICE_SECURITY_AND_RESOURCE_OWNERSHIP_V08.md)** — Service-to-Service JWT authentication (Matching → Location) and fine-grained resource ownership validation.
 - 🔁 **[RETRY_DEDUPLICATION_V07.md](docs/engineering/RETRY_DEDUPLICATION_V07.md)** — Resilience retry deduplication, clean single-layer retry architecture, and Circuit Breaker hygiene.
 - 🚦 **[RIDE_STATE_MACHINE_V06.md](docs/engineering/RIDE_STATE_MACHINE_V06.md)** — Strict ride lifecycle state machine, `DRIVER_ARRIVING` transition, and invalid state validation.
 - 🔒 **[IDEMPOTENT_EVENT_PROCESSING_V04.md](docs/engineering/IDEMPOTENT_EVENT_PROCESSING_V04.md)** — Idempotent consumer pattern implementation using MySQL state tracking.
@@ -108,29 +170,57 @@ cd matching-service && mvn spring-boot:run
 
 ## 🔌 Core API Endpoints
 
-### 1. Update Driver Location
+### Auth Service (Port 8085)
+
 ```http
-POST http://localhost:8082/api/locations
+# Register a user
+POST http://localhost:8085/auth/register
 Content-Type: application/json
 
-{ "driverId": "driver-101", "latitude": 12.9720, "longitude": 77.5950 }
+{"name": "Alice", "email": "alice@example.com", "password": "password123", "role": "RIDER"}
+
+# Login — returns JWT
+POST http://localhost:8085/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "password123"}
+
+# Generate a service token (internal — used by matching-service)
+POST http://localhost:8085/auth/service-token
+X-Service-Secret: <service-secret-configured-in-properties>
 ```
 
-### 2. Claim Driver (Atomic Reservation)
+### Location Service (Port 8082)
+
 ```http
+# Update driver location (requires DRIVER JWT)
+POST http://localhost:8082/api/v1/locations/drivers/update
+Authorization: Bearer <DRIVER_JWT>
+Content-Type: application/json
+
+{"driverId": "driver-101", "latitude": 12.9720, "longitude": 77.5950}
+
+# Query nearby drivers (open — called by matching-service)
+GET http://localhost:8082/api/v1/locations/drivers/nearby?latitude=12.9716&longitude=77.5946&radius=5.0
+
+# Claim a driver (requires SERVICE JWT — called by matching-service)
 POST http://localhost:8082/api/v1/drivers/driver-101/claim
+Authorization: Bearer <SERVICE_JWT>
 Content-Type: application/json
 
-{ "rideId": "R400" }
+{"rideId": "R400"}
 ```
 
-### 3. Request a Cab
+### Ride Service (Port 8083)
+
 ```http
+# Request a cab (requires RIDER JWT — riderId is derived from JWT sub)
 POST http://localhost:8083/api/v1/rides/request
+Authorization: Bearer <RIDER_JWT>
 Content-Type: application/json
 
 {
-  "riderId": "rider-001",
+  "riderId": "<your-user-id>",
   "pickupLatitude": 12.9716,
   "pickupLongitude": 77.5946,
   "pickupAddress": "MG Road, Bangalore",
@@ -138,22 +228,28 @@ Content-Type: application/json
   "dropLongitude": 77.6245,
   "dropAddress": "Koramangala, Bangalore"
 }
-```
 
-### 4. Track Ride Status
-```http
-GET http://localhost:8083/api/v1/rides/{id}
+# Track ride status (requires JWT — must be ride participant)
+GET http://localhost:8083/api/v1/rides/{rideId}
+Authorization: Bearer <JWT>
+
+# Get all rides for a rider (requires matching RIDER JWT)
+GET http://localhost:8083/api/v1/rides/rider/{riderId}
+Authorization: Bearer <RIDER_JWT>
 ```
 
 ---
 
 ## 🧪 Running Unit Tests
 
-Run isolated unit tests across all 3 microservices:
+Run isolated unit tests across all 4 microservices:
 
 ```bash
+# Auth Service Unit Tests
+cd auth-service && mvn test-compile surefire:test
+
 # Location Service Unit Tests
-cd location-service && mvn test-compile surefire:test "-Dtest=LocationServiceTest"
+cd location-service && mvn test-compile surefire:test "-Dtest=LocationServiceTest,DriverClaimServiceTest"
 
 # Matching Service Unit Tests
 cd matching-service && mvn test-compile surefire:test "-Dtest=MatchingServiceTest,RideEventConsumerTest"

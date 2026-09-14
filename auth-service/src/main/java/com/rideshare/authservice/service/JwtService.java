@@ -63,4 +63,20 @@ public class JwtService {
         return keyFactory.generatePrivate(keySpec);
 
     }
+
+    public String generateServiceToken(String serviceName) {
+        Date now = new Date();
+        Date expiry = new Date(now.getTime() + expiration);
+
+        return Jwts.builder()
+                .subject(serviceName)
+                .claim("role", "SERVICE")
+                .claim("service", serviceName)
+                .issuer("auth-service")
+                .issuedAt(now)
+                .expiration(expiry)
+                .signWith(privateKey)
+                .compact();
+    }
+
 }

@@ -14,45 +14,47 @@
 3.  [Infrastructure](#3-infrastructure)
 4.  [Microservice Responsibilities](#4-microservice-responsibilities)
 5.  [Communication Strategy](#5-communication-strategy)
-6.  [Location Service](#6-location-service)
-7.  [Matching Service](#7-matching-service)
-8.  [Ride Service](#8-ride-service)
-9.  [Kafka Event Contracts](#9-kafka-event-contracts)
-10. [Ride Lifecycle](#10-ride-lifecycle)
-11. [Core Algorithms](#11-core-algorithms)
-12. [API Directory](#12-api-directory)
-13. [End-to-End Flow](#13-end-to-end-flow)
-14. [Failure & Reliability
-    Considerations](#14-failure--reliability-considerations)
-15. [Scalability Considerations](#15-scalability-considerations)
+6.  [Auth Service](#6-auth-service)
+7.  [Location Service](#7-location-service)
+8.  [Matching Service](#8-matching-service)
+9.  [Ride Service](#9-ride-service)
+10. [Kafka Event Contracts](#10-kafka-event-contracts)
+11. [Ride Lifecycle](#11-ride-lifecycle)
+12. [Core Algorithms](#12-core-algorithms)
+13. [API Directory](#13-api-directory)
+14. [End-to-End Flow](#14-end-to-end-flow)
+15. [Failure & Reliability Considerations](#15-failure--reliability-considerations)
+16. [Scalability Considerations](#16-scalability-considerations)
 
 ------------------------------------------------------------------------
 
 # 1. System Overview
 
 The Cab-Driving platform is a distributed microservices system designed
-around three core capabilities:
+around four core capabilities:
 
+- 🔐 **Authentication & Authorization**
 - 📍 **Real-time driver location tracking**
 - 🎯 **Automated driver-rider matching**
 - 🚕 **Ride lifecycle management**
 
-The system contains three Spring Boot microservices:
+The system contains four Spring Boot microservices:
 
-| Service            | Responsibility                                  |   Port |
-|--------------------|-------------------------------------------------|-------:|
-| `location-service` | Driver location + nearby-driver queries         | `8082` |
-| `ride-service`     | Ride lifecycle + persistence + fare calculation | `8083` |
-| `matching-service` | Driver discovery + driver selection             | `8084` |
+| Service            | Responsibility                                              |   Port |
+|--------------------|-------------------------------------------------------------|-------:|
+| `auth-service`     | JWT issuance, user registration/login, RBAC, service tokens | `8085` |
+| `location-service` | Driver location + nearby-driver queries + atomic claiming   | `8082` |
+| `ride-service`     | Ride lifecycle + persistence + fare calculation + ownership | `8083` |
+| `matching-service` | Driver discovery + scoring + service-JWT-authenticated claim| `8084` |
 
 Infrastructure:
 
-| Component | Purpose                | Host Port | Container Port |
-|-----------|------------------------|----------:|---------------:|
-| MySQL     | Ride persistence       |    `3306` |         `3306` |
-| Redis     | Driver geospatial data |    `6380` |         `6379` |
-| Kafka     | Event streaming        |    `9093` |         `9092` |
-| Zookeeper | Kafka coordination     |    `2182` |         `2181` |
+| Component | Purpose                         | Host Port | Container Port |
+|-----------|---------------------------------|----------:|---------------:|
+| MySQL     | Ride & auth persistence         |    `3306` |         `3306` |
+| Redis     | Driver geospatial data + claims |    `6380` |         `6379` |
+| Kafka     | Event streaming                 |    `9093` |         `9092` |
+| Zookeeper | Kafka coordination              |    `2182` |         `2181` |
 
 > **Important:** The Spring Boot services run locally, while
 > Redis/Kafka/Zookeeper run through Docker Compose. Therefore the Spring
@@ -71,53 +73,64 @@ Infrastructure:
                          │       Client        │
                          └──────────┬──────────┘
                                     │
-                         HTTP / REST│
-                                    │
-                  ┌─────────────────┴─────────────────┐
-                  │                                   │
-                  ▼                                   ▼
-        ┌──────────────────┐                ┌──────────────────┐
-        │   ride-service   │                │ location-service │
-        │      :8083       │                │      :8082       │
-        └────────┬─────────┘                └────────┬─────────┘
-                 │                                   │
-                 │ ride.requested                    │ Redis Geo
-                 ▼                                   ▼
-        ┌──────────────────┐                ┌──────────────────┐
-        │      Kafka       │                │      Redis       │
-        │      :9093       │                │   host :6380     │
-        └────────┬─────────┘                └──────────────────┘
-                 │
-                 │ consume
-                 ▼
-        ┌──────────────────┐
-        │ matching-service │
-        │      :8084       │
-        └────────┬─────────┘
-                 │
-                 │ Feign / REST
-                 ▼
-        ┌──────────────────┐
-        │ location-service │
-        └────────┬─────────┘
-                 │
-                 │ nearby drivers
-                 ▼
-        ┌──────────────────┐
-        │      Redis       │
-        └──────────────────┘
+              +-------JWT Auth-------+-------JWT Auth---------+
+              |  (POST /auth/login)                           |
+              v                                               v
+    +------------------+                          +──────────────────+
+    |   auth-service   |                          │   ride-service   │
+    |     :8085        |                          │      :8083       │
+    | MySQL: auth_db   |                          └────────┬─────────┘
+    +------------------+                                   │
+                                                           │ ride.requested
+                                                           ▼
+              +----------------------------------------------+--------+
+              |                   matching-service                     |
+              |                       :8084                            |
+              +-----------------------------+--------------------------+
+                                            |                  |
+                        Kafka: ride.matched |                  | Feign + Service JWT
+                                            v                  v
+                                  +──────────────+   +──────────────────+
+                                  │ ride-service │   │ location-service │
+                                  └──────────────┘   │      :8082       │
+                                                     │ Redis: Geo+Claim │
+                                                     └──────────────────┘
+```
 
-matching-service
-        │
-        │ ride.matched
-        ▼
-      Kafka
-        │
-        ▼
-ride-service
-        │
-        ▼
-     MySQL
+### Security Architecture
+
+``` text
+                         Client (User)
+                               │
+                               │ Bearer JWT (sub: userId, role: RIDER/DRIVER)
+                               ▼
+                  ┌─────────────────────────┐
+                  │      Ride Service       │
+                  └────────────┬────────────┘
+                               │
+                      Spring Security
+                               │
+             ┌─────────────────┴─────────────────┐
+             │                                   │
+           RBAC                              Ownership
+     ("Am I a RIDER?")                  ("Is this MY ride?")
+             │                                   │
+             └─────────────────┬─────────────────┘
+                               │
+                               ▼
+                            Ride DB
+─────────────────────────────────────────────────────────────
+                 Service-to-Service Flow:
+
+                 ┌──────────────────┐
+                 │ Matching Service │
+                 └──────────┬───────┘
+                            │ Service JWT
+                            │ (sub: matching-service, role: SERVICE)
+                            ▼
+                 ┌──────────────────┐
+                 │ Location Service │──► @PreAuthorize("hasRole('SERVICE')")
+                 └──────────────────┘
 ```
 
 ------------------------------------------------------------------------
@@ -131,20 +144,26 @@ graph TD
     Driver[Driver Client]
 
     subgraph Services
+        AuthService["auth-service :8085"]
         RideService["ride-service :8083"]
         LocationService["location-service :8082"]
         MatchingService["matching-service :8084"]
     end
 
     subgraph Infrastructure
-        MySQL[("MySQL :3306")]
+        AuthDB[("MySQL auth_db :3306")]
+        MySQL[("MySQL uberapp :3306")]
         Redis[("Redis\nhost :6380 → container :6379")]
         Kafka[["Kafka\nhost :9093 → container :9092"]]
         Zookeeper[["Zookeeper\nhost :2182 → container :2181"]]
     end
 
-    Rider -->|"POST ride request"| RideService
-    Driver -->|"Location heartbeat"| LocationService
+    Rider -->|"POST /auth/register + /auth/login"| AuthService
+    Driver -->|"POST /auth/register + /auth/login"| AuthService
+    AuthService -->|"Save user"| AuthDB
+
+    Rider -->|"POST ride request + Bearer JWT"| RideService
+    Driver -->|"Location heartbeat + Bearer JWT"| LocationService
 
     LocationService --> Redis
 
@@ -153,8 +172,9 @@ graph TD
 
     Kafka -->|"ride.requested"| MatchingService
 
-    MatchingService -->|"Feign / REST"| LocationService
+    MatchingService -->|"Feign + Service JWT"| LocationService
     LocationService -->|"Geo search"| Redis
+    LocationService -->|"Atomic Lua claim"| Redis
 
     MatchingService -->|"ride.matched"| Kafka
     Kafka -->|"ride.matched"| RideService
@@ -261,32 +281,40 @@ setup**, not a production Kafka cluster.
 
 # 4. Microservice Responsibilities
 
-| Service            | Responsibilities                                                               | Storage   |
-|--------------------|--------------------------------------------------------------------------------|-----------|
-| `location-service` | Receive driver locations, update Geo index, find nearby drivers, atomic claim  | Redis     |
-| `matching-service` | Consume ride requests, find candidate drivers, score & claim driver, publish   | Stateless |
-| `ride-service`     | Create rides, persist rides, calculate fare, manage ride status                | MySQL     |
+| Service            | Responsibilities                                                                            | Storage        |
+|--------------------|---------------------------------------------------------------------------------------------|----------------|
+| `auth-service`     | User registration/login, RSA JWT issuance, RBAC role assignment, service token generation   | MySQL (auth_db)|
+| `location-service` | Receive driver locations (JWT-protected), update Geo index, find nearby drivers, atomic claim (Service-JWT-protected) | Redis |
+| `matching-service` | Consume ride requests, find candidate drivers, score & claim driver via Service JWT, publish | MySQL + Feign  |
+| `ride-service`     | Create rides, enforce JWT ownership, calculate fare, manage ride lifecycle state machine     | MySQL (uberapp)|
+
+### Auth Service
+
+Owns **identity and trust**.
+
+- Issues RSA-signed JWTs (`sub = userId`, `role = RIDER/DRIVER/ADMIN`) to human users.
+- Issues RSA-signed Service JWTs (`sub = matching-service`, `role = SERVICE`) for inter-service communication.
+- All other services validate token signatures using the RSA Public Key.
 
 ### Location Service
 
 Owns **driver location data**.
 
-It should not own ride state.
+It should not own ride state. The driver claim endpoint (`POST /api/v1/drivers/{id}/claim`) is protected with `@PreAuthorize("hasRole('SERVICE')")` — only Matching Service can call it.
 
 ### Matching Service
 
 Owns the **matching decision**.
 
-It does not directly modify the ride database.
+It does not directly modify the ride database. It carries a pre-configured Service JWT that it injects via Feign interceptor for all calls to Location Service.
 
 ### Ride Service
 
 Owns **ride state and persistence**.
 
-It reacts to the matching result through Kafka.
+It reacts to the matching result through Kafka. It enforces resource ownership checks via `SecurityContextHolder` — riders and drivers can only access rides they are participants in. Async Kafka consumer paths (`updateRideWithDriver`) are exempt from human JWT checks.
 
-This separation prevents one service from becoming responsible for the
-entire business workflow.
+This separation prevents one service from becoming responsible for the entire business workflow.
 
 ------------------------------------------------------------------------
 
@@ -351,7 +379,97 @@ selection logic itself.
 
 ------------------------------------------------------------------------
 
-# 6. Location Service
+## 5.3 Service-to-Service JWT Security
+
+When Matching Service calls Location Service to claim a driver, the request must be authenticated. Location Service cannot accept arbitrary HTTP clients calling `POST /api/v1/drivers/{id}/claim`.
+
+``` text
+Auth Service
+     │
+     │ POST /auth/service-token
+     │ Header: X-Service-Secret: <configured-secret>
+     ▼
+RSA-signed JWT
+     { sub: "matching-service", role: "SERVICE" }
+     │
+     ▼
+Matching Service config
+     location.service.token=<service-jwt>
+     │
+     ▼
+Feign Interceptor
+     Authorization: Bearer <service-jwt>
+     │
+     ▼
+Location Service
+     Spring Security validates JWT signature
+     JwtAuthenticationConverter maps role=SERVICE → ROLE_SERVICE
+     @PreAuthorize("hasRole('SERVICE')") ✅
+```
+
+**Key design decision**: The service JWT is intentionally stored in configuration rather than dynamically fetched and cached at runtime. This keeps the architecture simple for the current project scope — a token-refresh/cache layer would be premature optimization.
+
+------------------------------------------------------------------------
+
+# 6. Auth Service
+
+## Responsibility
+
+The Auth Service is the **single source of trust** in the system. No other service stores passwords or signs tokens.
+
+``` text
+Client
+  │
+  │ POST /auth/register  { name, email, password, role }
+  ▼
+Auth Service
+  │
+  ├──► MySQL (auth_db) — save user with BCrypt-hashed password
+  │
+  │ POST /auth/login  { email, password }
+  ▼
+Auth Service
+  │
+  ├──► Validate credentials
+  └──► Sign JWT with RSA Private Key
+         { sub: userId, role: RIDER/DRIVER/ADMIN }
+         → Return { accessToken: "..." }
+```
+
+## JWT Structure
+
+``` text
+Header:  { alg: RS256 }
+Payload: { sub: "20", role: "RIDER", exp: ... }
+Signature: signed with RSA Private Key
+```
+
+Other services validate the signature using the shared RSA **Public Key** — they never share the private key.
+
+## Service Token Flow
+
+``` text
+POST /auth/service-token
+Header: X-Service-Secret: <matching-service-secret>
+  │
+  ▼
+Auth Service verifies secret against application config
+  │
+  └──► Issues JWT: { sub: "matching-service", role: "SERVICE" }
+```
+
+## RBAC Roles
+
+| Role      | Assigned to           | Permissions |
+|-----------|-----------------------|-------------|
+| `RIDER`   | End users requesting rides | `POST /rides/request`, `GET` own rides, `PUT` cancel |
+| `DRIVER`  | Drivers in the field  | `POST /locations/update`, driver state transitions |
+| `ADMIN`   | Platform operators    | Elevated access |
+| `SERVICE` | Internal microservices | `POST /drivers/{id}/claim` (Location Service only) |
+
+------------------------------------------------------------------------
+
+# 7. Location Service
 
 ## Responsibility
 
@@ -413,7 +531,7 @@ The matching service then consumes this result.
 
 ------------------------------------------------------------------------
 
-# 7. Matching Service
+# 8. Matching Service
 
 ## Responsibility
 
@@ -474,11 +592,11 @@ location.service.url=http://localhost:8082
 
 ------------------------------------------------------------------------
 
-# 8. Ride Service
+# 9. Ride Service
 
 ## Responsibility
 
-Ride Service owns the ride lifecycle.
+Ride Service owns the ride lifecycle **and enforces resource ownership**.
 
 It handles:
 
@@ -490,23 +608,42 @@ It handles:
 - Ride cancellation
 - Ride start
 - Ride completion
+- **JWT ownership validation** (riders/drivers can only access their own rides)
 
 Database:
 
 ``` text
 MySQL
    │
-   └── rides
+   └── rides (uberapp)
 ```
+
+## Resource Ownership Model
+
+``` text
+JWT sub = 20
+       │
+       ▼
+getCurrentUserId() → "20"
+       │
+       ├── checkOwnership(ride.getRiderId())    // for rider endpoints
+       ├── checkOwnership(ride.getDriverId())   // for driver state transitions
+       └── checkRideAccess(ride)               // for shared endpoints (cancel)
+               ├── currentUserId == ride.riderId  → ALLOW
+               └── currentUserId == ride.driverId → ALLOW
+               else → 403 Forbidden
+```
+
+> **Kafka exemption**: The async `updateRideWithDriver()` consumer path does not run through `SecurityContextHolder` — there is no human JWT in an event-driven invocation.
 
 ## Ride Entity
 
 The ride contains information such as:
 
 ``` text
-id
-riderId
-driverId
+id          (UUID, auto-generated)
+riderId     (maps to auth-service user.id)
+driverId    (populated after matching)
 pickup coordinates
 drop coordinates
 pickup address
@@ -522,7 +659,7 @@ completedAt
 
 ------------------------------------------------------------------------
 
-# 9. Kafka Event Contracts
+# 10. Kafka Event Contracts
 
 ## 9.1 `ride.requested`
 
@@ -587,7 +724,7 @@ ride-service
 
 ------------------------------------------------------------------------
 
-# 10. Ride Lifecycle
+# 11. Ride Lifecycle
 
 The ride follows a strict state machine validated by `RideStateTransitionValidator.java`.
 
@@ -629,7 +766,7 @@ The application enforces these rules strictly via `RideStateTransitionValidator`
 
 ------------------------------------------------------------------------
 
-# 11. Core Algorithms
+# 12. Core Algorithms
 
 ## 11.1 Driver Proximity
 
@@ -734,36 +871,41 @@ The calculated value is rounded to two decimal places.
 
 ------------------------------------------------------------------------
 
-# 12. API Directory
+# 13. API Directory
+
+## Auth Service — `localhost:8085`
+
+| Method | Endpoint               | Auth Required          | Purpose                                        |
+|--------|------------------------|------------------------|------------------------------------------------|
+| `POST` | `/auth/register`       | None                   | Register user with `name`, `email`, `password`, `role` |
+| `POST` | `/auth/login`          | None                   | Login, returns `{ accessToken }` JWT           |
+| `POST` | `/auth/service-token`  | `X-Service-Secret` header | Generate Service JWT for inter-service auth |
 
 ## Location Service — `localhost:8082`
 
-| Method   | Endpoint                               | Purpose                     |
-|----------|----------------------------------------|-----------------------------|
-| `POST`   | `/api/v1/locations/...`                | Driver location update      |
-| `GET`    | `/api/v1/locations/drivers/nearby`     | Find nearby drivers         |
-| `DELETE` | `/api/v1/locations/drivers/{driverId}` | Remove driver location      |
-| `POST`   | `/api/v1/drivers/{driverId}/claim`     | Atomic driver claim (30s)   |
-| `DELETE` | `/api/v1/drivers/{driverId}/claim`     | Release claim (stale safe)  |
-
-> Exact controller mappings should be treated as the source of truth if
-> the API evolves.
+| Method   | Endpoint                                   | Auth Required          | Purpose                     |
+|----------|--------------------------------------------|------------------------|---------------------------------|
+| `POST`   | `/api/v1/locations/drivers/update`         | `ROLE_DRIVER` JWT      | Driver location update      |
+| `GET`    | `/api/v1/locations/drivers/nearby`         | Open (permit all)      | Find nearby drivers         |
+| `DELETE` | `/api/v1/locations/drivers/{driverId}`     | `ROLE_DRIVER` JWT      | Remove driver location      |
+| `POST`   | `/api/v1/drivers/{driverId}/claim`         | `ROLE_SERVICE` JWT     | Atomic driver claim (30s)   |
+| `DELETE` | `/api/v1/drivers/{driverId}/claim`         | `ROLE_SERVICE` JWT     | Release claim (stale safe)  |
 
 ## Ride Service — `localhost:8083`
 
-| Method | Endpoint                        | Purpose                           |
-|--------|---------------------------------|-----------------------------------|
-| `POST` | `/api/v1/rides/request`         | Request a ride                    |
-| `GET`  | `/api/v1/rides/{id}`            | Get ride details                  |
-| `GET`  | `/api/v1/rides/rider/{riderId}` | Get rider rides                   |
-| `PUT`  | `/api/v1/rides/{id}/arriving`   | Driver arriving at pickup location|
-| `PUT`  | `/api/v1/rides/{id}/start`      | Start ride                        |
-| `PUT`  | `/api/v1/rides/{id}/complete`   | Complete ride                     |
-| `PUT`  | `/api/v1/rides/{id}/cancel`     | Cancel ride                       |
+| Method | Endpoint                        | Auth Required            | Ownership Check                    | Purpose                           |
+|--------|---------------------------------|--------------------------|------------------------------------|-----------------------------------|
+| `POST` | `/api/v1/rides/request`         | `ROLE_RIDER` JWT         | `sub == request.riderId`           | Request a ride                    |
+| `GET`  | `/api/v1/rides/{id}`            | JWT (any)                | `sub == riderId OR driverId`       | Get ride details                  |
+| `GET`  | `/api/v1/rides/rider/{riderId}` | `ROLE_RIDER` JWT         | `sub == riderId`                   | Get rider rides                   |
+| `PUT`  | `/api/v1/rides/{id}/arriving`   | `ROLE_DRIVER` JWT        | `sub == ride.driverId`             | Driver arriving at pickup         |
+| `PUT`  | `/api/v1/rides/{id}/start`      | `ROLE_DRIVER` JWT        | `sub == ride.driverId`             | Start ride                        |
+| `PUT`  | `/api/v1/rides/{id}/complete`   | `ROLE_DRIVER` JWT        | `sub == ride.driverId`             | Complete ride                     |
+| `PUT`  | `/api/v1/rides/{id}/cancel`     | JWT (any)                | `sub == riderId OR driverId`       | Cancel ride                       |
 
 ------------------------------------------------------------------------
 
-# 13. End-to-End Flow
+# 14. End-to-End Flow
 
 ``` mermaid
 sequenceDiagram
@@ -771,6 +913,7 @@ sequenceDiagram
     actor Driver
     actor Rider
 
+    participant Auth as Auth Service
     participant Location as Location Service
     participant Redis
     participant Ride as Ride Service
@@ -778,72 +921,93 @@ sequenceDiagram
     participant Kafka
     participant Match as Matching Service
 
-    Driver->>Location: Send location
+    Rider->>Auth: POST /auth/login
+    Auth-->>Rider: { accessToken: RIDER_JWT }
+
+    Driver->>Auth: POST /auth/login
+    Auth-->>Driver: { accessToken: DRIVER_JWT }
+
+    Driver->>Location: POST /locations/update + DRIVER_JWT
     Location->>Redis: Update driver Geo location
 
-    Rider->>Ride: Request ride
+    Rider->>Ride: POST /rides/request + RIDER_JWT
+    Ride->>Ride: Validate JWT ownership (sub == riderId)
     Ride->>Ride: Calculate estimated fare
     Ride->>DB: Save REQUESTED ride
     Ride->>Kafka: Publish ride.requested
 
     Kafka->>Match: Consume ride.requested
 
-    Match->>Location: Find nearby drivers
+    Match->>Location: GET /locations/drivers/nearby (open)
     Location->>Redis: Geo search
     Redis-->>Location: Nearby drivers
     Location-->>Match: Candidate drivers
 
     Match->>Match: Score candidates
+    Match->>Location: POST /drivers/{id}/claim + SERVICE_JWT
+    Location->>Redis: Atomic Lua claim script
+    Redis-->>Location: Claimed
+    Location-->>Match: { claimed: true }
+
     Match->>Kafka: Publish ride.matched
 
-    Kafka->>Ride: Consume ride.matched
+    Kafka->>Ride: Consume ride.matched (no user JWT)
     Ride->>DB: Assign driver + ACCEPTED
 
-    Driver->>Ride: Driver Arriving
+    Driver->>Ride: PUT /rides/{id}/arriving + DRIVER_JWT
+    Ride->>Ride: checkOwnership(ride.driverId)
     Ride->>DB: DRIVER_ARRIVING
 
-    Driver->>Ride: Start ride
+    Driver->>Ride: PUT /rides/{id}/start + DRIVER_JWT
+    Ride->>Ride: checkOwnership(ride.driverId)
     Ride->>DB: RIDE_STARTED
 
-    Driver->>Ride: Complete ride
+    Driver->>Ride: PUT /rides/{id}/complete + DRIVER_JWT
+    Ride->>Ride: checkOwnership(ride.driverId)
     Ride->>DB: COMPLETED + actual fare
 ```
 
 ### Simplified Flow
 
 ``` text
-1. Driver updates location
+0. Rider & Driver authenticate → Auth Service → JWT
         ↓
-2. Location Service → Redis
+1. Driver updates location (DRIVER_JWT)
         ↓
-3. Rider requests ride
+2. Location Service → Redis Geo index
+        ↓
+3. Rider requests ride (RIDER_JWT, ownership validated server-side)
         ↓
 4. Ride Service saves ride
         ↓
-5. Ride Service → Kafka
+5. Ride Service → Kafka (ride.requested)
         ↓
 6. Matching Service consumes event
         ↓
-7. Matching Service → Location Service
+7. Matching Service → Location Service (GET nearby, open)
         ↓
-8. Location Service → Redis
+8. Location Service → Redis Geo search → candidate list
         ↓
-9. Best driver selected
+9. Matching scores drivers → best candidate selected
         ↓
-10. Matching Service → Kafka
+10. Matching Service → Location Service (POST claim, SERVICE_JWT)
         ↓
-11. Ride Service assigns driver (ACCEPTED)
+11. Location Service → Redis Lua script → atomic claim with 30s TTL
         ↓
-12. Driver arriving at pickup (DRIVER_ARRIVING)
+12. Matching Service → Kafka (ride.matched)
         ↓
-13. Driver starts ride (RIDE_STARTED)
+13. Ride Service assigns driver (ACCEPTED) — no user JWT, async consumer
         ↓
-14. Driver completes ride (COMPLETED)
+14. Driver arriving at pickup (DRIVER_JWT + ownership check)
+        ↓
+15. Driver starts ride (DRIVER_JWT + ownership check)
+        ↓
+16. Driver completes ride (DRIVER_JWT + ownership check)
 ```
 
 ------------------------------------------------------------------------
 
-# 14. Failure & Reliability Considerations
+# 15. Failure & Reliability Considerations
 
 The current project is a learning/prototype system, but the architecture
 should account for distributed-system failure modes.
@@ -907,7 +1071,7 @@ Expire request
 
 ------------------------------------------------------------------------
 
-# 15. Scalability Considerations
+# 16. Scalability Considerations
 
 ## Ride Service
 
@@ -972,15 +1136,21 @@ cluster with appropriate:
 
 # 🧠 Key Architectural Decisions
 
-| Decision                            | Reason                                              |
-|-------------------------------------|-----------------------------------------------------|
-| Kafka between Ride and Matching     | Decouples ride creation from matching               |
-| Feign between Matching and Location | Matching needs immediate nearby-driver data         |
-| Redis Geo for locations             | Fast geospatial lookup for frequently changing data |
-| MySQL for rides & idempotency       | Durable relational persistence for state & events   |
-| Idempotent Kafka Consumers          | Prevents duplicate event processing side-effects    |
-| Kafka key = `rideId`                | Keeps events associated with the same ride          |
-| State machine for rides             | Prevents invalid lifecycle transitions              |
+| Decision                                          | Reason                                                                    |
+|---------------------------------------------------|---------------------------------------------------------------------------|
+| Dedicated `auth-service` for JWT issuance         | Single source of trust; no other service signs tokens or stores passwords |
+| RSA asymmetric signing (RS256)                    | Services only need the public key to validate — private key stays in auth |
+| Service JWT for Matching → Location               | Location Service cannot be callable by arbitrary external clients         |
+| Service JWT stored in config (not dynamically fetched) | Avoids premature token-refresh/cache complexity for this project scope |
+| Ownership checks via `SecurityContextHolder`      | Server derives identity from validated JWT `sub`, not client request body |
+| Kafka consumer exempt from ownership checks       | Async event-driven paths have no human JWT context                        |
+| Kafka between Ride and Matching                   | Decouples ride creation from matching                                     |
+| Feign between Matching and Location               | Matching needs immediate nearby-driver data                               |
+| Redis Geo for locations                           | Fast geospatial lookup for frequently changing data                       |
+| MySQL for rides, auth & idempotency               | Durable relational persistence for state & events                         |
+| Idempotent Kafka Consumers                        | Prevents duplicate event processing side-effects                          |
+| Kafka key = `rideId`                              | Keeps events associated with the same ride                                |
+| State machine for rides                           | Prevents invalid lifecycle transitions                                    |
 
 ------------------------------------------------------------------------
 
@@ -1020,3 +1190,7 @@ This gives the project practical exposure to:
 - State machines
 - Distributed-system failure modes
 - Horizontal scalability
+- JWT Authentication (RSA-signed, asymmetric)
+- Role-Based Access Control (RBAC)
+- Fine-Grained Resource Ownership
+- Service-to-Service Security

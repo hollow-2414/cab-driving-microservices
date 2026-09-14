@@ -3,6 +3,7 @@ package com.rideshare.locationservice.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import java.util.List;
 
@@ -44,6 +45,7 @@ public class DriverClaimService {
 
     private static final long CLAIM_TTL_SECONDS = 30;
 
+    @PreAuthorize("hasRole('SERVICE')")
     public boolean claimDriver(String driverId, String rideId) {
 
         String driverKey = "driver:claim:" + driverId;

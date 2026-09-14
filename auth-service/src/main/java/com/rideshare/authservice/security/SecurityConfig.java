@@ -30,13 +30,17 @@ public class SecurityConfig {
                         )
                 )
                 .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt -> {})
+                        oauth2.jwt(jwt ->jwt.jwtAuthenticationConverter(
+                                        new JwtAuthenticationConverter()
+                                )
+                        )
                 )
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.FORWARD).permitAll()
                         .requestMatchers(
                                 "/auth/register",
                                 "/auth/login",
+                                "/auth/service-token",
                                 "/actuator/health",
                                 "/error")
                         .permitAll()

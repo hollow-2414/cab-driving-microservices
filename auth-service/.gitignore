@@ -34,4 +34,8 @@ build/
 
 
 
-*.pem
+### Security & Cryptographic Keys ###
+*.p12
+*.pfx
+src/main/resources/keys/private.pem
+

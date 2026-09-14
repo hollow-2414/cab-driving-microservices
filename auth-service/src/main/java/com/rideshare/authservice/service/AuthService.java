@@ -9,6 +9,7 @@ import com.rideshare.authservice.exception.UserAlreadyExistsException;
 import com.rideshare.authservice.exception.UserDisabledException;
 import com.rideshare.authservice.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -62,5 +63,17 @@ public class AuthService {
         String token = jwtService.generateToken(user);
 
         return new LoginResponse(token);
+    }
+
+    @Value("${application.security.service.matching-secret}")
+    private String matchingSecret;
+
+    public String generateMatchingServiceToken(String secret) {
+
+        if (!matchingSecret.equals(secret)) {
+            throw new InvalidCredentialException("Invalid service credentials");
+        }
+
+        return jwtService.generateServiceToken("matching-service");
     }
 }
